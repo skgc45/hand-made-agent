@@ -3,15 +3,16 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { WORKSPACE } from "../config.js";
 
 const exec = promisify(execFile);
 
-const ROOT = path.resolve(import.meta.dirname, "..", "..", "sandbox");
+const ROOT = path.resolve(WORKSPACE);
 
 function resolveInRoot(relPath: string): string {
   const abs = path.resolve(ROOT, relPath);
   if (abs !== ROOT && !abs.startsWith(ROOT + path.sep)) {
-    throw new Error(`sandbox/ の外にはアクセスできません: ${relPath}`);
+    throw new Error(`${WORKSPACE} の外にはアクセスできません: ${relPath}`);
   }
   return abs;
 }
@@ -22,11 +23,11 @@ export const tools: OpenAI.ChatCompletionTool[] = [
     function: {
       name: "list_files",
       description:
-        "sandbox 内のディレクトリのファイル一覧を返す。パスを省略するとルート。",
+        `${WORKSPACE} 内のディレクトリのファイル一覧を返す。パスを省略するとルート。`,
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "sandbox からの相対パス" },
+          path: { type: "string", description: `${WORKSPACE} からの相対パス` },
         },
       },
     },
@@ -35,11 +36,11 @@ export const tools: OpenAI.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "read_file",
-      description: "sandbox 内のファイルの中身を読む。",
+      description: `${WORKSPACE} 内のファイルの中身を読む。`,
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "sandbox からの相対パス" },
+          path: { type: "string", description: `${WORKSPACE} からの相対パス` },
         },
         required: ["path"],
       },
@@ -50,11 +51,11 @@ export const tools: OpenAI.ChatCompletionTool[] = [
     function: {
       name: "write_file",
       description:
-        "sandbox 内のファイルに書き込む。既存ファイルは上書きされる。親ディレクトリは自動作成する。",
+        `${WORKSPACE} 内のファイルに書き込む。既存ファイルは上書きされる。親ディレクトリは自動作成する。`,
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "sandbox からの相対パス" },
+          path: { type: "string", description: `${WORKSPACE} からの相対パス` },
           content: { type: "string", description: "書き込む内容" },
         },
         required: ["path", "content"],
@@ -66,7 +67,7 @@ export const tools: OpenAI.ChatCompletionTool[] = [
     function: {
       name: "bash",
       description:
-        "シェルコマンドを実行して標準出力・標準エラー・終了コードを返す。カレントディレクトリは sandbox。",
+        `シェルコマンドを実行して標準出力・標準エラー・終了コードを返す。カレントディレクトリは ${WORKSPACE}。`,
       parameters: {
         type: "object",
         properties: {

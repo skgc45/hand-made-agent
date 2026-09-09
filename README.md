@@ -44,6 +44,7 @@ npm run typecheck
 | `CONTEXT_LIMIT` | `0`（無効） | トリム発動のトークン閾値。実験では `1200` |
 | `TRIM` | `none` | `none` / `naive` / `safe` / `compact` |
 | `APPROVAL` | `ask` | `auto` で bash を自動承認 |
+| `WORKSPACE` | `sandbox` | エージェントが触れる唯一の場所 |
 | `STREAM` | 有効 | `0` で応答が出揃ってから1回で流す |
 | `PORT` | `3000` | |
 | `STORE` | `sqlite` | `sqlite` / `file` / `memory` |
@@ -109,7 +110,7 @@ src/render/cli.ts      AG-UI イベント → 端末文字列
 
 public/index.html      自前フロントエンド（素の JS）
 web/src/main.tsx       CopilotKit 版フロントエンド（Vite + React）
-sandbox/               エージェントが触れる唯一の場所
+sandbox/               エージェントが触れる唯一の場所（WORKSPACE で変更可）
 ```
 
 ### なぜ CLI にも transport 層を切ったか

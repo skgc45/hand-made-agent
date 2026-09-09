@@ -7,6 +7,7 @@ import {
   STORE,
   STORE_PATH,
   STREAM,
+  WORKSPACE,
   SYSTEM,
   TRIM,
   createClient,
@@ -57,7 +58,7 @@ const restored = (await sessions.get(threadId)).messages.length - 1;
 console.log(
   `\x1b[2m${MODEL} / ${STORE}:${STORE_PATH} / thread ${threadId}` +
     (restored > 0 ? `（履歴 ${restored} 件を復元）` : "") +
-    `\nCtrl+C で終了。作業対象は sandbox/ です。\n\x1b[0m`,
+    `\nCtrl+C で終了。作業対象は ${WORKSPACE} です。\n\x1b[0m`,
 );
 
 stopOnSignal(transport);

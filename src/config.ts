@@ -10,6 +10,8 @@ export const CONTEXT_LIMIT = Number(process.env.CONTEXT_LIMIT ?? 0);
 export const TRIM = process.env.TRIM ?? "none";
 export const PORT = Number(process.env.PORT ?? 3000);
 export const APPROVAL = process.env.APPROVAL ?? "ask";
+/** エージェントが触れる唯一の場所。相対パスは起動時の cwd から解決される */
+export const WORKSPACE = process.env.WORKSPACE ?? "sandbox";
 export const STREAM = process.env.STREAM !== "0";
 export const STORE = process.env.STORE ?? "sqlite";
 export const STORE_PATH =
@@ -17,7 +19,7 @@ export const STORE_PATH =
   (STORE === "sqlite" ? ".threads/agent.db" : ".threads");
 
 export const SYSTEM = `あなたはファイル操作ができるアシスタントです。
-作業対象は sandbox ディレクトリの中だけです。
+作業対象は ${WORKSPACE} の中だけです。
 ユーザーには日本語で答えてください。
 
 ツールの使い方:
