@@ -1548,14 +1548,35 @@ CREATE TABLE agent_events (
 ) ENGINE = MergeTree ORDER BY (thread_id, ts)
 ```
 
-### よく使うクエリ
+### 叩き方
 
-叩き方はこれ。
+シェル関数を一度だけ定義しておく。
 
 ```bash
 Q() { curl -s -u hma:hma 'http://localhost:8123/?database=hma' --data-binary "$1"; }
-Q "SELECT ... FORMAT PrettyCompactMonoBlock"
 ```
+
+つながっているか確認する。
+
+```bash
+$ Q "SELECT count() FROM agent_events"
+650
+```
+
+**表で見たいときは末尾に `FORMAT PrettyCompactMonoBlock` を足す。** 付けないと TSV で返る。
+
+```bash
+$ Q "SELECT thread_id, count() AS n FROM agent_events GROUP BY thread_id ORDER BY n DESC LIMIT 3 FORMAT PrettyCompactMonoBlock"
+   ┌─thread_id─┬───n─┐
+1. │ m-compact │ 139 │
+2. │ m-graph   │ 109 │
+3. │ m-graph2  │ 105 │
+   └───────────┴─────┘
+```
+
+### よく使うクエリ
+
+以下は SQL 本体だけ。`Q "..."` に包んで、必要なら `FORMAT PrettyCompactMonoBlock` を足す。
 
 **スレッドごとのコストと所要時間**
 
