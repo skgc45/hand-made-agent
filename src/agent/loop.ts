@@ -585,6 +585,18 @@ export class Agent {
             ? /retry in ([\d.]+)s/.exec(error.message)
             : null;
         const wait = hint ? Math.ceil(Number(hint[1])) + 1 : 5 * 2 ** attempt;
+
+        // 黙って寝るとハングと区別が付かない
+        yield {
+          type: EventType.CUSTOM,
+          name: "retry",
+          value: {
+            attempt: attempt + 1,
+            waitSeconds: wait,
+            status: error instanceof OpenAI.APIError ? error.status : undefined,
+            message: (error as Error).message.slice(0, 120),
+          },
+        };
         await sleep(wait * 1000, undefined, { signal });
       }
     }

@@ -65,6 +65,12 @@ export class CliRenderer {
         return {
           text: dim(`  [${v.strategy}: ${v.removed}件削除 → ${v.kept}件]`),
         };
+      case "retry":
+        return {
+          text: yellow(
+            `  [${v.status ?? "接続エラー"} — ${v.waitSeconds} 秒待って再試行 (${v.attempt}/5)]`,
+          ),
+        };
       case "steering":
         return {
           text: dim(`  [割り込み: ${(v.messages as string[]).join(" / ")}]`),

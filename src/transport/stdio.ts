@@ -75,6 +75,9 @@ export class StdioTransport implements Transport {
           console.log(dim("  [割り込みを受け付けました]"));
         }
       };
+      // TTY の readline は出力のたびにプロンプト行を描き直すので、
+      // run 中は空にしておかないと "> " がツール出力の途中に混ざる
+      this.rl.setPrompt("");
       this.rl.on("line", onLine);
       this.rl.resume();
 
