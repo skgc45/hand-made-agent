@@ -4,7 +4,7 @@ const INSTRUCTION = `会話ログを要約する。
 判明した事実・数値・ファイル名・実行したコマンドとその結果・結論を落とさないこと。
 箇条書きで簡潔に。前置き・推測・感想は書かない。`;
 
-function render(message: OpenAI.ChatCompletionMessageParam): string {
+export function render(message: OpenAI.ChatCompletionMessageParam): string {
   if (message.role === "assistant" && message.tool_calls?.length) {
     return message.tool_calls
       .map((c) =>

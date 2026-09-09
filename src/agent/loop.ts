@@ -19,7 +19,8 @@ import {
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { summarize } from "./compact.js";
+import { render, summarize } from "./compact.js";
+import { type Fact, FactGraph, extractFacts } from "./graph.js";
 import { MessageAccumulator } from "./stream.js";
 import { charCount, splitSafe, trimNaive, trimSafe } from "./trim.js";
 import type { Toolset } from "./toolset.js";
@@ -145,6 +146,7 @@ export type Entry =
       summaryText: string;
     }
   | { kind: "pending"; pending: Pending | null }
+  | { kind: "fact"; facts: Fact[] }
   | { kind: "usage"; promptTokens: number; charsPerToken: number };
 
 export type AppendFn = (entry: Entry) => Promise<void>;
@@ -155,6 +157,7 @@ export class Agent {
 
   private pending?: Pending;
   private summaryText = "";
+  private readonly graph = new FactGraph();
   private charsPerToken = 3;
   private totalPromptTokens = 0;
 
@@ -179,6 +182,9 @@ export class Agent {
           break;
         case "pending":
           this.pending = entry.pending ?? undefined;
+          break;
+        case "fact":
+          this.graph.apply(entry.facts);
           break;
         case "usage":
           this.totalPromptTokens += entry.promptTokens;
@@ -500,7 +506,47 @@ export class Agent {
     );
     if (before <= contextLimit) return;
 
-    if (trim === "compact") {
+    if (trim === "graph") {
+      const { kept, dropped } = splitSafe(this.messages, this.limitChars());
+      if (dropped.length === 0) return;
+
+      const extracted = await extractFacts(
+        this.config.client,
+        this.config.model,
+        dropped,
+        render,
+        signal,
+      );
+      this.totalPromptTokens += extracted.promptTokens;
+      const { added, superseded } = this.graph.apply(extracted.facts);
+
+      this.replace(kept);
+      this.messages[0] = {
+        role: "system",
+        content: `${this.config.system}\n\n## 分かっている事実\n${this.graph.render()}`,
+      };
+      await this.record({ kind: "fact", facts: extracted.facts });
+      await this.record({
+        kind: "history",
+        messages: [...this.messages],
+        summaryText: this.summaryText,
+      });
+
+      yield {
+        type: EventType.CUSTOM,
+        name: "graph",
+        value: {
+          dropped: dropped.length,
+          added,
+          superseded,
+          total: this.graph.size(),
+          active: this.graph.active().length,
+          unparsed: extracted.unparsed,
+          promptTokens: extracted.promptTokens,
+          completionTokens: extracted.completionTokens,
+        },
+      };
+    } else if (trim === "compact") {
       const { kept, dropped } = splitSafe(this.messages, this.limitChars());
       if (dropped.length === 0) return;
 

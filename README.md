@@ -57,7 +57,7 @@ npm run typecheck
 | `LLM_MODEL` | `gemini-3.5-flash-lite` | 無料枠で回しやすいもの |
 | `LLM_BASE_URL` | Gemini の OpenAI 互換 | Ollama / Groq に差し替え可能 |
 | `CONTEXT_LIMIT` | `0`（無効） | トリム発動のトークン閾値。実験では `1200` |
-| `TRIM` | `none` | `none` / `naive` / `safe` / `compact` |
+| `TRIM` | `none` | `none` / `naive` / `safe` / `compact` / `graph` |
 | `APPROVAL` | `ask` | `auto` で bash を自動承認 |
 | `WORKSPACE` | `sandbox` | エージェントが触れる唯一の場所 |
 | `PROFILE` | `sandbox` | `sandbox` / `coding` |
@@ -222,6 +222,7 @@ src/profile/sandbox.ts   sandbox を眺めるアシスタント
 src/profile/coding.ts    コーディングエージェント
 src/agent/trim.ts      charCount / trimNaive / splitSafe / trimSafe（文字数ベース）
 src/agent/compact.ts   LLM に要約させる rolling compaction
+src/agent/graph.ts     事実を抽出して持つ bi-temporal なグラフ（TRIM=graph）
 
 src/session/index.ts   Sessions。Map<threadId, Agent> と store の読み書き
 src/store/index.ts     interface Store と createStore()

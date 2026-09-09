@@ -71,6 +71,12 @@ export class CliRenderer {
             `  [${v.status ?? "接続エラー"} — ${v.waitSeconds} 秒待って再試行 (${v.attempt}/5)]`,
           ),
         };
+      case "graph": {
+        const body = `graph: ${v.dropped}件から事実 ${v.added} 追加 / ${v.superseded} 更新 → 有効 ${v.active}件 | コスト 入力 ${v.promptTokens} / 出力 ${v.completionTokens}`;
+        return v.unparsed
+          ? { text: yellow(`  [${body} — 応答を読めず抽出できなかった]`) }
+          : { text: dim(`  [${body}]`) };
+      }
       case "steering":
         return {
           text: dim(`  [割り込み: ${(v.messages as string[]).join(" / ")}]`),
