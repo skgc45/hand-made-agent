@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hand-made-agent</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fbfbfa;
+        --fg: #1c1c1a;
+        --muted: #75746e;
+        --line: #e3e2dd;
+        --panel: #fff;
+        --accent: #3f6de0;
+        --warn: #b4690e;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #161614;
+          --fg: #eceae4;
+          --muted: #96938a;
+          --line: #2e2c28;
+          --panel: #1e1c1a;
+          --accent: #7fa0f0;
+          --warn: #e2a13c;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.65 ui-sans-serif, system-ui, sans-serif;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      header {
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+        flex-wrap: wrap;
+      }
+      header strong { font-size: 13px; }
+      #stats { color: var(--muted); font: 12px ui-monospace, monospace; }
+      #log { flex: 1; overflow-y: auto; padding: 16px; }
+      .msg { margin: 0 0 14px; max-width: 70ch; white-space: pre-wrap; }
+      .user { color: var(--accent); font-weight: 600; }
+      .tool {
+        font: 12px/1.6 ui-monospace, monospace;
+        color: var(--muted);
+        border-left: 2px solid var(--line);
+        padding: 2px 0 2px 10px;
+        margin: 0 0 6px;
+        overflow-x: auto;
+      }
+      .meta { font: 11px ui-monospace, monospace; color: var(--muted); margin: 0 0 10px; }
+      .approval {
+        border: 1px solid var(--warn);
+        border-radius: 6px;
+        padding: 10px 12px;
+        margin: 0 0 14px;
+        max-width: 70ch;
+        background: var(--panel);
+      }
+      .approval code {
+        display: block;
+        font-size: 12px;
+        margin: 6px 0 10px;
+        word-break: break-all;
+      }
+      button {
+        font: inherit;
+        padding: 4px 14px;
+        margin-right: 8px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: var(--panel);
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--accent); }
+      form { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
+      input {
+        flex: 1;
+        font: inherit;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--fg);
+      }
+      input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>hand-made-agent</strong>
+      <span id="stats">待機中</span>
+    </header>
+    <div id="log"></div>
+    <form id="form">
+      <input id="input" placeholder="sandbox について聞いてみる" autocomplete="off" autofocus />
+      <button type="submit">送信</button>
+    </form>
+
+    <script type="module">
+      const threadId = crypto.randomUUID();
+      const log = document.getElementById("log");
+      const stats = document.getElementById("stats");
+      const form = document.getElementById("form");
+      const input = document.getElementById("input");
+      const toolNames = new Map();
+      const toolArgs = new Map();
+
+      const add = (cls, text) => {
+        const el = document.createElement("div");
+        el.className = cls;
+        el.textContent = text;
+        log.append(el);
+        log.scrollTop = log.scrollHeight;
+        return el;
+      };
+
+      function askApproval(interrupt) {
+        const box = document.createElement("div");
+        box.className = "approval";
+        box.innerHTML = `<div>${interrupt.message}</div><code></code>`;
+        box.querySelector("code").textContent =
+          toolArgs.get(interrupt.toolCallId) ?? "";
+
+        for (const [label, approved] of [["許可", true], ["拒否", false]]) {
+          const btn = document.createElement("button");
+          btn.textContent = label;
+          btn.onclick = () => {
+            box.querySelectorAll("button").forEach((b) => b.remove());
+            box.append(`→ ${label}`);
+            // 新しい run を立てて再開する（AG-UI の resume）
+            send("", [
+              {
+                interruptId: interrupt.id,
+                status: "resolved",
+                payload: { approved },
+              },
+            ]);
+          };
+          box.append(btn);
+        }
+        log.append(box);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      // ストリーミングでは delta が何度も届くので、同じ要素に足していく
+      const open = new Map();
+
+      function handle(event) {
+        switch (event.type) {
+          case "TEXT_MESSAGE_START":
+            open.set(event.messageId, add("msg", ""));
+            break;
+          case "TEXT_MESSAGE_CONTENT": {
+            const el = open.get(event.messageId) ?? add("msg", "");
+            open.set(event.messageId, el);
+            el.textContent += event.delta;
+            log.scrollTop = log.scrollHeight;
+            break;
+          }
+          case "TEXT_MESSAGE_END":
+            open.delete(event.messageId);
+            break;
+          case "TOOL_CALL_START":
+            toolNames.set(event.toolCallId, event.toolCallName);
+            toolArgs.set(event.toolCallId, "");
+            open.set(
+              event.toolCallId,
+              add("tool", `→ ${event.toolCallName}(`),
+            );
+            break;
+          case "TOOL_CALL_ARGS": {
+            toolArgs.set(
+              event.toolCallId,
+              (toolArgs.get(event.toolCallId) ?? "") + event.delta,
+            );
+            const el = open.get(event.toolCallId);
+            if (el) el.textContent += event.delta;
+            break;
+          }
+          case "TOOL_CALL_END": {
+            const el = open.get(event.toolCallId);
+            if (el) el.textContent += ")";
+            open.delete(event.toolCallId);
+            break;
+          }
+          case "TOOL_CALL_RESULT":
+            add("tool", `← ${event.content.split("\n")[0].slice(0, 120)}`);
+            break;
+          case "RUN_FINISHED":
+            if (event.outcome?.type === "interrupt")
+              event.outcome.interrupts.forEach(askApproval);
+            break;
+          case "CUSTOM":
+            if (event.name === "usage") {
+              const v = event.value;
+              stats.textContent = `messages ${v.messages} | ctx ${v.promptTokens} → out ${v.completionTokens} | ${v.charsPerToken} 文字/token | 累計入力 ${v.totalPromptTokens}`;
+            } else if (event.name === "compact")
+              add("meta", `[compact: ${event.value.dropped}件を要約 | コスト 入力 ${event.value.promptTokens}]`);
+            else if (event.name === "trim")
+              add("meta", `[${event.value.strategy}: ${event.value.removed}件削除 → ${event.value.kept}件]`);
+            break;
+          case "RUN_ERROR":
+            add("meta", `エラー: ${event.message}`);
+            break;
+        }
+      }
+
+      async function send(message, resume) {
+        const res = await fetch("/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadId,
+            runId: crypto.randomUUID(),
+            messages: message ? [{ id: crypto.randomUUID(), role: "user", content: message }] : [],
+            tools: [],
+            context: [],
+            resume,
+          }),
+        });
+
+        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop();
+          for (const part of parts) {
+            const line = part.split("\n").find((l) => l.startsWith("data: "));
+            if (line) handle(JSON.parse(line.slice(6)));
+          }
+        }
+      }
+
+      form.onsubmit = (e) => {
+        e.preventDefault();
+        const message = input.value.trim();
+        if (!message) return;
+        input.value = "";
+        add("msg user", message);
+        send(message);
+      };
+    </script>
+  </body>
+</html>

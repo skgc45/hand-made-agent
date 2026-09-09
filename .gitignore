@@ -1,0 +1,6 @@
+node_modules/
+sandbox/*
+!sandbox/.gitkeep
+.env
+.threads/
+.playwright-mcp/
