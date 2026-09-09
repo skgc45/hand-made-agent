@@ -11,9 +11,13 @@ export type TelemetryRow = {
   profile: string;
   model: string;
   type: string;
-  /** CUSTOM の name（usage / trim / compact / retry / steering） */
+  /** CUSTOM の name（usage / trim / compact / graph / retry / steering） */
   name: string;
   tool: string;
+  /** TOOL_CALL_START と TOOL_CALL_RESULT を突き合わせるため */
+  tool_call_id: string;
+  /** ツール結果の頭。失敗率を数えるのに使う */
+  content: string;
   prompt_tokens: number;
   completion_tokens: number;
   chars_per_token: number;
@@ -41,6 +45,8 @@ export function toRow(
   const custom = event.type === "CUSTOM" ? event : undefined;
   const value = (custom?.value ?? {}) as Record<string, unknown>;
   const toolCallName = "toolCallName" in event ? event.toolCallName : undefined;
+  const toolCallId = "toolCallId" in event ? event.toolCallId : undefined;
+  const content = "content" in event ? event.content : undefined;
 
   return {
     ts: new Date().toISOString().replace("T", " ").replace("Z", ""),
@@ -51,6 +57,8 @@ export function toRow(
     type: event.type,
     name: custom?.name ?? "",
     tool: (toolCallName as string) ?? "",
+    tool_call_id: (toolCallId as string) ?? "",
+    content: typeof content === "string" ? content.slice(0, 200) : "",
     prompt_tokens: Number(value.promptTokens ?? 0),
     completion_tokens: Number(value.completionTokens ?? 0),
     chars_per_token: Number(value.charsPerToken ?? 0),

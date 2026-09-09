@@ -1523,6 +1523,179 @@ WORKSPACE=sandbox/practice APPROVAL=auto npm start
 テストを先に走らせて落ちることを確認し、期待値をテストファイルから読み、
 直してからもう一度走らせる。**この順序はプロンプトに書いた5行がそのまま出ている。**
 
+## 計測する — ClickHouse に流す
+
+`Sessions.run()` が yield している AG-UI イベントに、**2つ目の消費者**を足しただけ。
+transport は表示に、telemetry は計測に、同じ列を使う。
+
+```bash
+docker compose up -d          # clickhouse-server が :8123 で上がる
+TELEMETRY=clickhouse hma      # 既定は none なので、普段は無関係
+```
+
+ClickHouse クライアントライブラリは足していない。HTTP に JSONEachRow を投げるだけ。
+1行ずつ挿すと MergeTree が細かいパートで埋まるので、50件か2秒でまとめて送る。
+**計測が落ちてもエージェントは止めない**（catch してログだけ出す）。
+
+```sql
+CREATE TABLE agent_events (
+  ts, thread_id, run_id, profile, model,
+  type,              -- RUN_STARTED / TOOL_CALL_START / CUSTOM …
+  name,              -- CUSTOM の種類: usage / compact / graph / retry / steering
+  tool, tool_call_id, content,
+  prompt_tokens, completion_tokens, chars_per_token,
+  payload            -- CUSTOM の値をそのまま JSON で
+) ENGINE = MergeTree ORDER BY (thread_id, ts)
+```
+
+### よく使うクエリ
+
+叩き方はこれ。
+
+```bash
+Q() { curl -s -u hma:hma 'http://localhost:8123/?database=hma' --data-binary "$1"; }
+Q "SELECT ... FORMAT PrettyCompactMonoBlock"
+```
+
+**スレッドごとのコストと所要時間**
+
+```sql
+SELECT thread_id, any(model) AS model,
+  countIf(name='usage')      AS calls,
+  sum(prompt_tokens)         AS in_tok,
+  sum(completion_tokens)     AS out_tok,
+  round(dateDiff('millisecond', min(ts), max(ts))/1000, 1) AS sec
+FROM agent_events GROUP BY thread_id ORDER BY in_tok DESC
+```
+
+**ツール別の呼び出しと失敗**
+
+`TOOL_CALL_START`（ツール名を持つ）と `TOOL_CALL_RESULT`（結果を持つ）を
+`tool_call_id` で突き合わせる。結果側は `any()` で畳んでから join しないと行が増える。
+
+```sql
+SELECT s.tool AS tool, count() AS calls,
+  countIf(r.content LIKE 'エラー%')                 AS errors,
+  countIf(r.content LIKE 'ユーザーが実行を拒否%')     AS denied
+FROM (SELECT tool, tool_call_id FROM agent_events
+      WHERE type='TOOL_CALL_START' AND tool_call_id != '') s
+LEFT JOIN (SELECT tool_call_id, any(content) AS content FROM agent_events
+           WHERE type='TOOL_CALL_RESULT' GROUP BY tool_call_id) r
+  ON s.tool_call_id = r.tool_call_id
+GROUP BY tool ORDER BY calls DESC
+```
+
+**トリム戦略の比較**（`compact` と `graph` のどちらが高いか）
+
+```sql
+SELECT name AS strategy, count() AS fired,
+  sum(JSONExtractUInt(payload,'promptTokens')) AS extract_in_tok,
+  sum(JSONExtractUInt(payload,'dropped'))      AS dropped_msgs
+FROM agent_events WHERE name IN ('compact','graph','trim') GROUP BY name
+```
+
+**文字/token の較正がどれだけ振れたか**（ステップ3 の 2.17〜3.57 を測り直す）
+
+```sql
+SELECT thread_id, round(min(chars_per_token),2) AS min, round(max(chars_per_token),2) AS max
+FROM agent_events WHERE name='usage' AND chars_per_token > 0
+GROUP BY thread_id ORDER BY max DESC
+```
+
+**429 に何回当たったか**
+
+```sql
+SELECT thread_id, count() AS retries,
+  sum(JSONExtractUInt(payload,'waitSeconds')) AS waited_sec
+FROM agent_events WHERE name='retry' GROUP BY thread_id
+```
+
+> 列を後から足したので、古い行は `tool_call_id` と `content` が空。
+> join するクエリは `tool_call_id != ''` で除外する（しないと空 id 同士が
+> 総当たりで結合して、件数が桁違いに膨らむ）。
+
+## 記憶を構造で持つ — TRIM=graph（結果: 負けた）
+
+compaction は散文を散文に圧縮するので、何が落ちたか分からない。
+事実を構造で別に持てば消えないはず、という仮説で bi-temporal なグラフを足した。
+
+```ts
+export type Fact = {
+  subject: string; predicate: string; object: string;
+  validFrom: string;   // その事実が成り立つ時点
+  validTo: string;     // 覆された時刻。空なら現在も有効
+  recordedAt: string;  // システムがそれを知った時刻 ← validFrom とは別軸
+};
+```
+
+同じ `subject` / `predicate` に別の値が来たら、**消さずに `validTo` を立てる**。
+「担当者が A から B に変わった」を上書きではなく履歴で持てる。
+`Entry` に `fact` 種別を足したので、追記ログから replay で組み直せる。
+
+### 実測: 勝てなかった
+
+**同じ5問**（`CONTEXT_LIMIT=1200`）
+
+| | LLM 呼び出し | 入力トークン | 数値の保持 |
+|---|---|---|---|
+| `compact` | 17 | 17,609 | ERROR 45 / WARN 114 / 09時 42件 |
+| `graph` | 12 | **23,566（+34%）** | 同じ |
+
+**事実が変わるケース**（担当者 田中 → 鈴木、`CONTEXT_LIMIT=600`）
+
+| | 入力トークン | 「誰から誰に変わったか」 |
+|---|---|---|
+| `compact` | 7,493 | 「田中」から「鈴木」に変わりました |
+| `graph` | 5,526 | 同じ（事実欄を根拠に挙げた） |
+
+**TKG の本命であるはずの時系列ケースでも差が出なかった。**
+
+### 踏んだ壊れ方
+
+**1. モデルが指定した JSON の形を守らない。**
+`{"facts":[...]}` を指示したのに**裸の配列**を返してきて、最初のパーサはそれを黙って捨てていた。
+3回中2回の抽出が無言で消えて、グラフが1件のまま気づかなかった。
+形の揺れを許容し、読めなかったら `unparsed` を立てて CLI に警告を出すようにした。
+
+**2. 述語が安定しないと、時系列の上書きが発動しない。**
+
+```
+memo.txt / content = 担当者: 田中
+memo.txt / 担当者  = 鈴木
+```
+
+`content` と `担当者` で述語が揺れたので、`validTo` を立てる機構は**一度も発火していない**
+（単体では A→B で動作確認済み）。正答したのは両方の事実が残っていたからで、時間軸のおかげではない。
+**Graphiti のような実装が entity / predicate resolution に大量の実装を割いている理由が分かった。**
+
+**3. 抽出にゴミが混じる。** コマンド全文が subject になる。
+
+```
+grep "WARN" app.log | cut -d'[' -f2 | ... / command = grep "WARN" app.log | ...
+```
+
+### では、どういうときに効きそうか
+
+負けた条件を裏返すと、効く条件が見える。
+
+| 条件 | なぜ効くか | 今回の課題では |
+|---|---|---|
+| **述語を先に決められる** | スキーマを固定すれば supersession が発動する。抽出も「この項目を埋めろ」になり、ゴミが減る | 自由抽出だったので述語が揺れた |
+| **同じ事実が何度も覆る** | 上書きせず履歴で持つ価値が出る。「いつ変わったか」を聞ける | 1回変わっただけで、履歴を問われなかった |
+| **真実の源が会話にしかない** | 読み直せないので、落としたら終わり | コードとログが手元にあり、いつでも読み直せた |
+| **会話が長く、事実が散らばる** | 散文要約だと後半に押し出される | 5問で収まった |
+
+具体的には、**運用の申し送り**（担当・状態・期限が変わり続ける）、**顧客対応の履歴**
+（「前回は A と言ったが今回 B に変わった」）、**組織のナレッジ**（決定が上書きされる）あたり。
+逆に**コーディングエージェントには向かない** — コードベース自体が真実の源で、
+`read_file` すればいつでも正解が取れるから。
+
+### いまの結論
+
+**この規模では compaction で足りている。** TKG はコストと失敗モードが勝つ。
+入れるなら、まず**述語のスキーマを固定する**ところから。自由抽出のままでは
+時間軸の機構が動かないので、TKG を名乗る意味がない。
+
 ## 判断済みのこと
 
 - **OpenAI 互換エンドポイントを使う**（Google SDK ではなく）。Ollama / Groq への差し替えが `LLM_BASE_URL` だけで済む

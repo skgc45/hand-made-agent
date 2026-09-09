@@ -704,9 +704,9 @@ export class Agent {
           toolCallName: call.function.name,
         };
       }
-      for (const [i, part] of (delta.tool_calls ?? []).entries()) {
+      for (const part of delta.tool_calls ?? []) {
         if (!part.function?.arguments) continue;
-        const call = acc.callAt(part.index ?? i);
+        const call = acc.callAt(acc.slotOf(part));
         if (!call) continue;
         yield {
           type: EventType.TOOL_CALL_ARGS,

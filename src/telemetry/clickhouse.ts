@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS agent_events (
   type              LowCardinality(String),
   name              LowCardinality(String),
   tool              LowCardinality(String),
+  tool_call_id      String,
+  content           String,
   prompt_tokens     UInt32,
   completion_tokens UInt32,
   chars_per_token   Float32,
@@ -55,7 +57,14 @@ export class ClickHouseTelemetry implements Telemetry {
   }
 
   private ensureTable(): Promise<void> {
-    this.ready ??= this.query(DDL).then(() => undefined);
+    // 既存テーブルに後から足した列も揃える
+    this.ready ??= this.query(DDL)
+      .then(() =>
+        this.query(
+          "ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS tool_call_id String, ADD COLUMN IF NOT EXISTS content String",
+        ),
+      )
+      .then(() => undefined);
     return this.ready;
   }
 

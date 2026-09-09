@@ -16,13 +16,30 @@ export class MessageAccumulator {
   private content = "";
   private readonly calls = new Map<number, Call>();
 
+  /**
+   * delta のどのツール呼び出しかを決める。
+   * OpenAI は index を必ず付けるが、Gemini は付けず id で区別してくる。
+   * 配列位置で代用すると、別チャンクで来た2つ目が1つ目に融合する。
+   */
+  private slotFor(part: NonNullable<Delta["tool_calls"]>[number]): number {
+    if (typeof part.index === "number") return part.index;
+    if (part.id) {
+      for (const [slot, call] of this.calls) {
+        if (call.id === part.id) return slot;
+      }
+      return this.calls.size;
+    }
+    // id も index も無ければ、直前の呼び出しの引数の続き
+    return Math.max(0, this.calls.size - 1);
+  }
+
   /** 新しく現れたツール呼び出しの index を返す（TOOL_CALL_START を出す用） */
   add(delta: Delta): { started: number[] } {
     if (delta.content) this.content += delta.content;
 
     const started: number[] = [];
-    for (const [i, part] of (delta.tool_calls ?? []).entries()) {
-      const index = part.index ?? i;
+    for (const part of delta.tool_calls ?? []) {
+      const index = this.slotFor(part);
       let call = this.calls.get(index);
       if (!call) {
         call = {
@@ -45,6 +62,11 @@ export class MessageAccumulator {
 
   callAt(index: number): Call | undefined {
     return this.calls.get(index);
+  }
+
+  /** ARGS イベントを出すとき、delta の断片がどの呼び出しのものか引く */
+  slotOf(part: NonNullable<Delta["tool_calls"]>[number]): number {
+    return this.slotFor(part);
   }
 
   toolCallIds(): string[] {
