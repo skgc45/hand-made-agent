@@ -93,7 +93,7 @@ src/shutdown.ts        SIGINT / SIGTERM → transport.stop()
 
 src/agent/loop.ts      Agent クラス。AG-UI イベントを yield する async generator ← 本体
 src/agent/stream.ts    ストリーミングの delta を1つのメッセージに畳む
-src/agent/tools.ts     list_files / read_file / write_file / bash + requiresApproval
+src/agent/tools.ts     list_files / read_file / write_file / edit_file / bash + requiresApproval
 src/agent/trim.ts      charCount / trimNaive / splitSafe / trimSafe（文字数ベース）
 src/agent/compact.ts   LLM に要約させる rolling compaction
 

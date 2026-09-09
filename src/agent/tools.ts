@@ -65,6 +65,27 @@ export const tools: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "edit_file",
+      description:
+        `${WORKSPACE} 内のファイルの一部を置き換える。ファイル全体を書き直さずに済むので、既存ファイルの修正はこちらを使う。`,
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: `${WORKSPACE} からの相対パス` },
+          old_text: {
+            type: "string",
+            description:
+              "置き換える前のテキスト。ファイル内でちょうど1箇所に一致する必要があるので、足りなければ前後の行を含めて長くする。",
+          },
+          new_text: { type: "string", description: "置き換えたあとのテキスト" },
+        },
+        required: ["path", "old_text", "new_text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "bash",
       description:
         `シェルコマンドを実行して標準出力・標準エラー・終了コードを返す。カレントディレクトリは ${WORKSPACE}。`,
@@ -104,6 +125,25 @@ const handlers: Record<
     await fs.mkdir(path.dirname(abs), { recursive: true });
     await fs.writeFile(abs, content, "utf-8");
     return `${content.length} 文字を書き込みました`;
+  },
+
+  async edit_file({ path: rel, old_text, new_text }) {
+    const abs = resolveInRoot(rel);
+    const before = await fs.readFile(abs, "utf-8");
+
+    // 一意でない置換は「どこを直したつもりか」が食い違うので、数えてから断る
+    const hits = before.split(old_text).length - 1;
+    if (hits === 0) {
+      return `エラー: old_text が見つかりません。read_file で現在の中身を確認してください。`;
+    }
+    if (hits > 1) {
+      return `エラー: old_text が ${hits} 箇所に一致します。前後の行を含めて一意になるまで長くしてください。`;
+    }
+
+    await fs.writeFile(abs, before.replace(old_text, new_text), "utf-8");
+    const removed = old_text.split("\n").length;
+    const added = new_text.split("\n").length;
+    return `${rel} を編集しました（-${removed} +${added} 行）`;
   },
 
   async bash({ command }, signal) {
