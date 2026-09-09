@@ -39,7 +39,7 @@ npm run typecheck
 | 変数 | 既定 | 意味 |
 |---|---|---|
 | `GEMINI_API_KEY` | — | AI Studio の無料枠キー |
-| `LLM_MODEL` | `gemini-3.8-flash` | 実験では `gemini-3.5-flash-lite` を使うことが多い |
+| `LLM_MODEL` | `gemini-3.5-flash-lite` | 無料枠で回しやすいもの |
 | `LLM_BASE_URL` | Gemini の OpenAI 互換 | Ollama / Groq に差し替え可能 |
 | `CONTEXT_LIMIT` | `0`（無効） | トリム発動のトークン閾値。実験では `1200` |
 | `TRIM` | `none` | `none` / `naive` / `safe` / `compact` |
@@ -53,7 +53,7 @@ npm run typecheck
 よく使う実験コマンド:
 
 ```bash
-CONTEXT_LIMIT=1200 TRIM=compact LLM_MODEL=gemini-3.5-flash-lite npm start
+CONTEXT_LIMIT=1200 TRIM=compact npm start
 ```
 
 ## ステップ

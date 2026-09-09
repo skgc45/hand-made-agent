@@ -5,7 +5,7 @@ export const BASE_URL =
   "https://generativelanguage.googleapis.com/v1beta/openai/";
 export const API_KEY =
   process.env.LLM_API_KEY ?? process.env.GEMINI_API_KEY ?? "";
-export const MODEL = process.env.LLM_MODEL ?? "gemini-3.8-flash";
+export const MODEL = process.env.LLM_MODEL ?? "gemini-3.5-flash-lite";
 export const CONTEXT_LIMIT = Number(process.env.CONTEXT_LIMIT ?? 0);
 export const TRIM = process.env.TRIM ?? "none";
 export const PORT = Number(process.env.PORT ?? 3000);
