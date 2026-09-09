@@ -22,7 +22,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { summarize } from "./compact.js";
 import { MessageAccumulator } from "./stream.js";
 import { charCount, splitSafe, trimNaive, trimSafe } from "./trim.js";
-import { executeTool, tools } from "./tools.js";
+import type { Toolset } from "./toolset.js";
 
 export type AgentEvent =
   | RunStartedEvent
@@ -85,6 +85,8 @@ export type AgentConfig = {
   client: OpenAI;
   model: string;
   system: string;
+  /** 何のエージェントかは、ここに何を渡すかで決まる */
+  toolset: Toolset;
   contextLimit: number;
   trim: string;
   /** ツール実行の直前に呼ばれる唯一の穴。承認もレート制限もここに挿す */
@@ -102,7 +104,6 @@ export type AgentConfig = {
   threadId?: string;
 };
 
-const TOOLS_CHARS = JSON.stringify(tools).length;
 const ABORTED = "中断されました";
 
 function isRetryable(error: unknown): boolean {
@@ -157,7 +158,10 @@ export class Agent {
   private charsPerToken = 3;
   private totalPromptTokens = 0;
 
+  private readonly toolsChars: number;
+
   constructor(private readonly config: AgentConfig) {
+    this.toolsChars = JSON.stringify(config.toolset.tools).length;
     this.threadId = config.threadId ?? randomUUID();
     this.messages = [{ role: "system", content: config.system }];
   }
@@ -418,7 +422,7 @@ export class Agent {
       const blocked = decision?.kind === "block";
       let result = blocked
         ? decision.reason
-        : await executeTool(name, JSON.parse(args), signal);
+        : await this.config.toolset.execute(name, JSON.parse(args), signal);
       let terminate = blocked ? decision.terminate === true : false;
 
       const after = await this.config.afterToolCall?.(
@@ -482,7 +486,7 @@ export class Agent {
   }
 
   private limitChars(): number {
-    return this.config.contextLimit * this.charsPerToken - TOOLS_CHARS;
+    return this.config.contextLimit * this.charsPerToken - this.toolsChars;
   }
 
   private async *trimIfNeeded(
@@ -492,7 +496,7 @@ export class Agent {
     if (!contextLimit || trim === "none") return;
 
     const before = Math.round(
-      (charCount(this.messages) + TOOLS_CHARS) / this.charsPerToken,
+      (charCount(this.messages) + this.toolsChars) / this.charsPerToken,
     );
     if (before <= contextLimit) return;
 
@@ -561,7 +565,7 @@ export class Agent {
   private async *generate(
     signal?: AbortSignal,
   ): AsyncGenerator<AgentEvent, GeneratedMessage> {
-    const sentChars = charCount(this.messages) + TOOLS_CHARS;
+    const sentChars = charCount(this.messages) + this.toolsChars;
 
     for (let attempt = 0; ; attempt++) {
       // 1文字でも流したあとに投げ直すと同じメッセージが二重に出るので、
@@ -610,7 +614,7 @@ export class Agent {
       {
         model: this.config.model,
         messages: this.messages,
-        tools,
+        tools: this.config.toolset.tools,
         stream: true,
         stream_options: { include_usage: true },
       },
@@ -678,7 +682,11 @@ export class Agent {
     signal?: AbortSignal,
   ): AsyncGenerator<AgentEvent, GeneratedMessage> {
     const response = await this.config.client.chat.completions.create(
-      { model: this.config.model, messages: this.messages, tools },
+      {
+        model: this.config.model,
+        messages: this.messages,
+        tools: this.config.toolset.tools,
+      },
       { signal },
     );
     const message = response.choices[0].message;

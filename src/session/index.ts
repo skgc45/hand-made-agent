@@ -5,13 +5,14 @@ import {
   Agent,
   type BeforeToolCall,
 } from "../agent/loop.js";
+import type { Profile } from "../profile/index.js";
 import { MessageQueue } from "../queue.js";
 import type { Store, ThreadSummary } from "../store/index.js";
 
 export type SessionsConfig = {
   client: OpenAI;
   model: string;
-  system: string;
+  profile: Profile;
   contextLimit: number;
   trim: string;
   beforeToolCall?: BeforeToolCall;
@@ -53,7 +54,7 @@ export class Sessions {
       const {
         client,
         model,
-        system,
+        profile,
         contextLimit,
         trim,
         beforeToolCall,
@@ -64,7 +65,8 @@ export class Sessions {
       agent = new Agent({
         client,
         model,
-        system,
+        system: profile.system,
+        toolset: profile.toolset,
         contextLimit,
         trim,
         beforeToolCall,

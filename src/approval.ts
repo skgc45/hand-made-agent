@@ -1,5 +1,4 @@
 import type { BeforeToolCall } from "./agent/loop.js";
-import { requiresApproval } from "./agent/tools.js";
 
 const DENIED = "ユーザーが実行を拒否しました。別の方法を検討してください。";
 
@@ -9,7 +8,10 @@ export type AskFn = (name: string, args: string) => Promise<boolean>;
  * 承認ゲートを beforeToolCall フックとして組み立てる。
  * ask があれば待って決め（stdio）、無ければ Interrupt にして run を終える（http）。
  */
-export function approvalHook(ask?: AskFn): BeforeToolCall {
+export function approvalHook(
+  requiresApproval: ReadonlySet<string>,
+  ask?: AskFn,
+): BeforeToolCall {
   return async ({ name, arguments: args, resume }) => {
     if (!requiresApproval.has(name)) return undefined;
 

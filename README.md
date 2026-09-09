@@ -45,6 +45,7 @@ npm run typecheck
 | `TRIM` | `none` | `none` / `naive` / `safe` / `compact` |
 | `APPROVAL` | `ask` | `auto` で bash を自動承認 |
 | `WORKSPACE` | `sandbox` | エージェントが触れる唯一の場所 |
+| `PROFILE` | `sandbox` | `sandbox` / `coding` |
 | `STREAM` | 有効 | `0` で応答が出揃ってから1回で流す |
 | `PORT` | `3000` | |
 | `STORE` | `sqlite` | `sqlite` / `file` / `memory` |
@@ -93,7 +94,11 @@ src/shutdown.ts        SIGINT / SIGTERM → transport.stop()
 
 src/agent/loop.ts      Agent クラス。AG-UI イベントを yield する async generator ← 本体
 src/agent/stream.ts    ストリーミングの delta を1つのメッセージに畳む
-src/agent/tools.ts     list_files / read_file / write_file / edit_file / bash + requiresApproval
+src/agent/tools.ts     createFileTools(workspace) — ファイル操作ツール一式
+src/agent/toolset.ts   interface Toolset（loop.ts が知る唯一のツールの姿）
+src/profile/index.ts   Profile 型と createProfile()
+src/profile/sandbox.ts   sandbox を眺めるアシスタント
+src/profile/coding.ts    コーディングエージェント
 src/agent/trim.ts      charCount / trimNaive / splitSafe / trimSafe（文字数ベース）
 src/agent/compact.ts   LLM に要約させる rolling compaction
 

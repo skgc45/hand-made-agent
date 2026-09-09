@@ -4,15 +4,16 @@ import {
   APPROVAL,
   CONTEXT_LIMIT,
   MODEL,
+  PROFILE,
   STORE,
   STORE_PATH,
   STREAM,
   WORKSPACE,
-  SYSTEM,
   TRIM,
   createClient,
 } from "./config.js";
 import { approvalHook } from "./approval.js";
+import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
 import { createStore } from "./store/index.js";
 import { stopOnSignal } from "./shutdown.js";
@@ -23,8 +24,15 @@ const { values: opts } = parseArgs({
     thread: { type: "string" },
     new: { type: "boolean" },
     list: { type: "boolean" },
+    profile: { type: "string" },
+    workspace: { type: "string" },
   },
 });
+
+const profile = createProfile(
+  opts.profile ?? PROFILE,
+  opts.workspace ?? WORKSPACE,
+);
 
 const store = createStore();
 
@@ -44,11 +52,12 @@ const transport = new StdioTransport(threadId);
 const sessions = new Sessions({
   client: createClient(),
   model: MODEL,
-  system: SYSTEM,
+  profile,
   contextLimit: CONTEXT_LIMIT,
   trim: TRIM,
   stream: STREAM,
   beforeToolCall: approvalHook(
+    profile.requiresApproval,
     APPROVAL === "auto" ? async () => true : transport.approve,
   ),
   store,
@@ -56,9 +65,9 @@ const sessions = new Sessions({
 
 const restored = (await sessions.get(threadId)).messages.length - 1;
 console.log(
-  `\x1b[2m${MODEL} / ${STORE}:${STORE_PATH} / thread ${threadId}` +
+  `\x1b[2m${MODEL} / ${profile.name}:${profile.workspace} / ${STORE}:${STORE_PATH} / thread ${threadId}` +
     (restored > 0 ? `（履歴 ${restored} 件を復元）` : "") +
-    `\nCtrl+C で終了。作業対象は ${WORKSPACE} です。\n\x1b[0m`,
+    `\nCtrl+C で終了。作業対象は ${profile.workspace} です。\n\x1b[0m`,
 );
 
 stopOnSignal(transport);
