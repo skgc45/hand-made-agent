@@ -72,6 +72,109 @@ npm run typecheck
 CONTEXT_LIMIT=1200 TRIM=compact npm start
 ```
 
+## 使ってみる — sandbox/practice を直させる
+
+`sandbox/practice` に、わざとバグを入れた買い物カゴの計算とテストが置いてある。
+8 件中 2 件が落ちる。まずそれを確認する。
+
+```bash
+$ cd sandbox/practice && node --test
+✔ subtotal は数量を掛けて合計する
+✔ subtotal は空配列で 0
+✔ percent クーポンは割合で引く
+✔ fixed クーポンは金額で引く
+✖ クーポンで負の金額にはならない
+✖ percent クーポンの割引上限は 50%
+✔ withTax は四捨五入する
+✔ checkout は小計→クーポン→税の順
+ℹ pass 6
+ℹ fail 2
+```
+
+エージェントに投げる。**リポジトリのルートから**、作業対象を渡して起動する。
+
+```bash
+$ hma code sandbox/practice
+gemini-3.5-flash-lite / coding:sandbox/practice / sqlite:.threads/agent.db / thread cli
+Ctrl+C で終了。作業対象は sandbox/practice です。
+
+> テストが落ちています。node --test で確認して、落ちているテストが通るように直してください。
+```
+
+```
+  → list_files({})
+  ← package.json
+  → list_files({"path":"src"})
+  ← cart.js
+  → bash({"command":"node --test"})              ← bash は承認が要る
+
+  bash を実行しようとしています:
+  {"command":"node --test"}
+  許可する? [y]es / [n]o / [a]lways: a           ← a を押すと以降の bash は聞かれない
+
+  ← exit 1
+  → read_file({"path":"src/cart.js"})
+  → read_file({"path":"src/cart.test.js"})       ← 期待値をテストから読む
+  → edit_file({"path":"src/cart.js","old_text":"export function applyCoupon…"})
+  ← src/cart.js を編集しました（-7 +8 行）
+  → bash({"command":"node --test"})              ← 2回目は承認を聞かれない
+  ← ✔ subtotal は数量を掛けて合計する
+
+落ちていたテストがすべて通るように修正しました。
+- `fixed` クーポンの場合、割引額が元の金額を上回っても 0 未満にならないよう…
+- `percent` クーポンの場合、割引率の上限を 50%（`0.5`）に制限し…
+  [messages 16 | ctx 2744 → out 101 | 3.45 文字/token | 累計入力 13000]
+```
+
+**LLM 呼び出し 8 回・累計入力 13,000 トークン。** 結果を確認する。
+
+```bash
+$ cd sandbox/practice && node --test | tail -2
+ℹ pass 8
+ℹ fail 0
+
+$ git diff sandbox/practice
+-    return amount - amount * coupon.value;
++    const rate = Math.min(coupon.value, 0.5);
++    return Math.max(0, amount - amount * rate);
+   }
+-  return amount - coupon.value;
++  return Math.max(0, amount - coupon.value);
+```
+
+### やり直す
+
+`sandbox/practice` は git で追跡しているので、いつでもバグ入りに戻せる。
+
+```bash
+git checkout sandbox/practice        # コードを戻す
+rm -rf .threads                      # 会話も消す（残すと続きから話す）
+```
+
+### 別のプロジェクトでやる
+
+`hma code` は**どのディレクトリからでも動く**。引数を省略すると現在のディレクトリが作業対象になる。
+
+```bash
+cd ~/somewhere/my-project
+hma code
+```
+
+`.threads/` はそのディレクトリに作られるので、プロジェクトごとに会話が分かれる。
+
+> `bash` は毎回承認を聞く。まとめて許可したいときは `a`、
+> 全部自動なら `APPROVAL=auto hma code …`。
+> **`bash` を渡した時点でサンドボックスは無い**ので、`auto` は使い捨ての対象にだけ。
+
+### 承認を Web で出す
+
+```bash
+PROFILE=coding WORKSPACE=sandbox/practice hma serve
+```
+
+http://localhost:3000 を開くと、同じ承認が画面のボタンとして出る。
+CLI とサーバーは同じ `.threads/agent.db` を見るので、`hma list` に両方のスレッドが並ぶ。
+
 ## ステップ
 
 - [x] 1. 素の while ループ
