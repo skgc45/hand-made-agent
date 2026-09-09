@@ -1,6 +1,8 @@
 node_modules/
 sandbox/*
 !sandbox/.gitkeep
+# デモ用の練習プロジェクトだけ追跡する。エージェントの変更を git diff で見るため
+!sandbox/practice/
 .env
 .threads/
 .playwright-mcp/
