@@ -25,12 +25,27 @@ npm start
 ## 実行方法
 
 ```bash
-npm start                       # CLI（thread "cli" を復元して続きから）
-npm start -- --thread foo       # スレッドを指定
-npm start -- --new              # 新しいスレッドで始める
-npm start -- --list             # 保存されているスレッド一覧
-npm run serve                   # HTTP + SSE（自前フロント: http://localhost:3000）
-cd web && npm run dev           # CopilotKit 版（http://localhost:5173、上のサーバーが必要）
+npm link            # 一度だけ。hma コマンドが入る
+```
+
+```bash
+hma                 # sandbox プロファイルで対話
+hma code            # コーディングエージェント。作業対象は現在のディレクトリ
+hma code path/to/x  # 作業対象を指定
+hma serve           # HTTP + SSE（自前フロント: http://localhost:3000）
+hma list            # 保存されているスレッド一覧
+hma --thread foo    # スレッドを指定（--new で新規）
+```
+
+**`hma code` はどのディレクトリからでも動く。** tsx と `.env` はインストール元から、
+作業対象と `.threads/` は実行したディレクトリから解決する（プロジェクトごとに会話が分かれる）。
+
+`npm start` / `npm run serve` も残してある。開発中はこちらのほうが速い。
+
+```bash
+npm start
+npm run serve
+cd web && npm run dev   # CopilotKit 版（http://localhost:5173、上のサーバーが必要）
 npm run typecheck
 ```
 
@@ -87,6 +102,7 @@ CONTEXT_LIMIT=1200 TRIM=compact npm start
 ```
 
 ```
+bin/hma.js             hma コマンド。サブコマンドを entry に振り分ける
 src/cli.ts             エントリ: 層を組み立てて StdioTransport を起動
 src/serve.ts           エントリ: 層を組み立てて HttpTransport を起動
 src/config.ts          環境変数と SYSTEM プロンプト

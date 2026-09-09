@@ -16,5 +16,8 @@
     "@ag-ui/core": "^0.0.59",
     "@ag-ui/encoder": "^0.0.59",
     "openai": "^7.10.0"
+  },
+  "bin": {
+    "hma": "./bin/hma.js"
   }
 }

@@ -9,10 +9,9 @@ export function subtotal(items) {
 export function applyCoupon(amount, coupon) {
   if (!coupon) return amount;
   if (coupon.type === "percent") {
-    const rate = Math.min(coupon.value, 0.5);
-    return Math.max(0, amount - amount * rate);
+    return amount - amount * coupon.value;
   }
-  return Math.max(0, amount - coupon.value);
+  return amount - coupon.value;
 }
 
 export function withTax(amount, rate) {
