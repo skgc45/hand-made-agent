@@ -1325,6 +1325,74 @@ $ grep -c "approved\|approve\|tool_approval\|denyReason\|requiresApproval\|拒�
 | HTTP `status: "cancelled"` | `ユーザーが実行を拒否しました。…` |
 | CLI `y` | `← hi` |
 
+## コーディングエージェントにする
+
+ここまでで足りていなかったのは3つだけだった。
+
+| | 変更 |
+|---|---|
+| `WORKSPACE` | `sandbox` 固定をやめて環境変数に。`ROOT` も `import.meta.dirname` 相対から cwd 相対へ |
+| `edit_file` | 差分編集。`write_file` は全文書き直しなので実コードだと破綻する |
+| SYSTEM プロンプト | 「ファイル操作ができるアシスタント」→「コーディングエージェント」（168 → 411 文字） |
+
+### `edit_file` の一意性ルール
+
+`old_text` が**ファイル内でちょうど1箇所に一致すること**を要求する。
+
+- 0 箇所 → どこを直すか分からない
+- 2 箇所以上 → **モデルが意図した箇所と、実際に置換される箇所が食い違う**
+
+数えてから断り、逃がし方をエラーメッセージで指示する。
+
+```
+エラー: old_text が 3 箇所に一致します。前後の行を含めて一意になるまで長くしてください。
+```
+
+Claude Code の `str_replace` も pi の `edit-diff.ts` も同じ制約を持っている。
+**「置換は一意でなければならない」は編集ツールの本質的な要件**で、
+モデルの賢さで回避できるものではない。
+
+### 練習用プロジェクト
+
+`sandbox/practice/` に買い物カゴの計算とテスト。`applyCoupon` に意図的なバグが2つあり、
+8 件中 2 件が落ちる（0 でクランプしない / percent の割引上限が無い）。
+
+`.gitignore` は `sandbox/*` を除外したまま `!sandbox/practice/` で
+ここだけ追跡する。**エージェントの変更を `git diff` で見せて、`git checkout` でやり直せる。**
+
+### 実測: 自分で直させる
+
+```
+WORKSPACE=sandbox/practice APPROVAL=auto npm start
+> src/cart.js のテストが落ちています。node --test で確認して、落ちているテストが通るように直してください。
+```
+
+```
+→ list_files({})                  ← どんなプロジェクトか見る
+→ list_files({"path":"src"})
+→ bash({"command":"node --test"}) ← まず落ちることを確認
+  ← exit 1
+→ read_file({"path":"src/cart.js"})
+→ read_file({"path":"src/cart.test.js"})   ← 期待値をテストから読む
+→ edit_file({...})                ← applyCoupon を関数まるごと置換
+  ← src/cart.js を編集しました（-7 +8 行）
+→ bash({"command":"node --test"}) ← 通ることを確認
+  ← ✔ subtotal は数量を掛けて合計する
+```
+
+| | |
+|---|---|
+| LLM 呼び出し | 8 回 |
+| 累計入力トークン | 13,280 |
+| 結果 | **8 pass / 0 fail**、差分は3行 |
+
+**2つのバグが同じ関数の中にあるので、`edit_file` を2回呼ぶと1回目の置換で
+2回目の `old_text` が変わってしまう。** モデルは関数まるごとを `old_text` にして
+1回で置換した。一意性ルールがそのまま「まとめて直す」方向に働いている。
+
+テストを先に走らせて落ちることを確認し、期待値をテストファイルから読み、
+直してからもう一度走らせる。**この順序はプロンプトに書いた5行がそのまま出ている。**
+
 ## 判断済みのこと
 
 - **OpenAI 互換エンドポイントを使う**（Google SDK ではなく）。Ollama / Groq への差し替えが `LLM_BASE_URL` だけで済む
