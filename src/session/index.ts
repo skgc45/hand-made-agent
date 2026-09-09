@@ -1,3 +1,4 @@
+import { EventType } from "@ag-ui/core";
 import type OpenAI from "openai";
 import {
   type AfterToolCall,
@@ -8,6 +9,7 @@ import {
 import type { Profile } from "../profile/index.js";
 import { MessageQueue } from "../queue.js";
 import type { Store, ThreadSummary } from "../store/index.js";
+import { type Telemetry, toRow } from "../telemetry/index.js";
 
 export type SessionsConfig = {
   client: OpenAI;
@@ -19,6 +21,7 @@ export type SessionsConfig = {
   afterToolCall?: AfterToolCall;
   stream?: boolean;
   store: Store;
+  telemetry?: Telemetry;
 };
 
 /** threadId ごとの Agent を作り、store から復元し、run のたびに保存する */
@@ -98,11 +101,27 @@ export class Sessions {
       );
     }
 
+    const { telemetry, model, profile } = this.config;
+    let currentRunId = runId ?? "";
+
     this.active.add(threadId);
     try {
-      yield* agent.run(userInput, runId, resume, signal);
+      // イベント列の2つ目の消費者。transport は表示に、こちらは計測に使う
+      for await (const event of agent.run(userInput, runId, resume, signal)) {
+        if (event.type === EventType.RUN_STARTED) currentRunId = event.runId;
+        telemetry?.record(
+          toRow(event, {
+            threadId,
+            runId: currentRunId,
+            profile: profile.name,
+            model,
+          }),
+        );
+        yield event;
+      }
     } finally {
       this.active.delete(threadId);
+      void telemetry?.flush();
     }
   }
 
@@ -110,7 +129,8 @@ export class Sessions {
     return this.config.store.list();
   }
 
-  close(): Promise<void> {
-    return this.config.store.close();
+  async close(): Promise<void> {
+    await this.config.telemetry?.close();
+    await this.config.store.close();
   }
 }

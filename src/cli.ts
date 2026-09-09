@@ -16,6 +16,7 @@ import { approvalHook } from "./approval.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
 import { createStore } from "./store/index.js";
+import { createTelemetry } from "./telemetry/index.js";
 import { stopOnSignal } from "./shutdown.js";
 import { StdioTransport } from "./transport/index.js";
 
@@ -61,6 +62,7 @@ const sessions = new Sessions({
     APPROVAL === "auto" ? async () => true : transport.approve,
   ),
   store,
+  telemetry: createTelemetry(),
 });
 
 const restored = (await sessions.get(threadId)).messages.length - 1;

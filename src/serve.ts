@@ -15,6 +15,7 @@ import { approvalHook } from "./approval.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
 import { createStore } from "./store/index.js";
+import { createTelemetry } from "./telemetry/index.js";
 import { stopOnSignal } from "./shutdown.js";
 import { HttpTransport } from "./transport/index.js";
 
@@ -32,6 +33,7 @@ const sessions = new Sessions({
     APPROVAL === "auto" ? async () => true : undefined,
   ),
   store: createStore(),
+  telemetry: createTelemetry(),
 });
 
 const transport = new HttpTransport(PORT);

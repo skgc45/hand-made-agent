@@ -64,6 +64,8 @@ npm run typecheck
 | `STREAM` | 有効 | `0` で応答が出揃ってから1回で流す |
 | `PORT` | `3000` | |
 | `STORE` | `sqlite` | `sqlite` / `file` / `memory` |
+| `TELEMETRY` | `none` | `clickhouse` で計測を流す（`docker compose up -d`） |
+| `TELEMETRY_URL` | `http://hma:hma@localhost:8123/?database=hma` | |
 | `STORE_PATH` | sqlite: `.threads/agent.db`<br>file: `.threads` | 保存先 |
 
 よく使う実験コマンド:
@@ -226,6 +228,9 @@ src/store/index.ts     interface Store と createStore()
 src/store/sqlite.ts      node:sqlite（既定）
 src/store/file.ts        JSON ファイル
 src/store/memory.ts      永続化しない（ステップ6 以前の挙動）
+src/telemetry/index.ts interface Telemetry と toRow()
+src/telemetry/clickhouse.ts  HTTP に JSONEachRow を投げるだけ
+src/telemetry/noop.ts        既定。何もしない
 
 src/transport/index.ts interface Transport
 src/transport/stdio.ts stdin/stdout。承認プロンプトもここ

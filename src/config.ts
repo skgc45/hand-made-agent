@@ -14,6 +14,9 @@ export const APPROVAL = process.env.APPROVAL ?? "ask";
 export const WORKSPACE = process.env.WORKSPACE ?? "sandbox";
 export const PROFILE = process.env.PROFILE ?? "sandbox";
 export const STREAM = process.env.STREAM !== "0";
+export const TELEMETRY = process.env.TELEMETRY ?? "none";
+export const TELEMETRY_URL =
+  process.env.TELEMETRY_URL ?? "http://hma:hma@localhost:8123/?database=hma";
 export const STORE = process.env.STORE ?? "sqlite";
 export const STORE_PATH =
   process.env.STORE_PATH ??
