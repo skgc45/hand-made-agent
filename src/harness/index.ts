@@ -6,6 +6,7 @@ import type {
 } from "../agent/loop.js";
 import { APPROVAL, hooksFor, permissionsFor } from "../config.js";
 import { createPermissions } from "../permission/index.js";
+import type { PermissionSet } from "../permission/index.js";
 import type { Profile } from "../profile/index.js";
 import { mergePermissions, saveAllowRule } from "../settings/index.js";
 import { retrust } from "../settings/trust.js";
@@ -28,10 +29,25 @@ export type Hooks = {
   onStop?: () => Promise<string[]>;
 };
 
+/**
+ * plan は「読むだけ」。専用の判定を足さず、読まないツールを deny に展開して渡す。
+ * どのツールが読むだけかを知っているのはプロファイルだけ
+ */
+export function planDenies(profile: Profile): PermissionSet {
+  const all = profile.toolset.tools
+    .filter((tool) => tool.type === "function")
+    .map((tool) => tool.function.name);
+  return { deny: all.filter((name) => !profile.readOnly.includes(name)) };
+}
+
 /** ツール実行に挿すものを1箇所で束ねる。増えていくのはこの配列 */
 export function createHooks({ profile, ask, trusted }: HarnessOptions): Hooks {
   const permissions = createPermissions(
-    mergePermissions(profile.permissions, permissionsFor(trusted)),
+    mergePermissions(
+      profile.permissions,
+      permissionsFor(trusted),
+      APPROVAL === "plan" ? planDenies(profile) : undefined,
+    ),
     APPROVAL,
   );
   const hooks = hooksFor(trusted);

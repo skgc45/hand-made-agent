@@ -1,18 +1,21 @@
 import {
+  APPROVAL,
   CONTEXT_LIMIT,
-  NEEDS_TRUST,
-  TRUST_SUBJECT,
   MODEL,
+  NEEDS_TRUST,
   PORT,
   PROFILE,
   SETTINGS_FILES,
   STORE,
   STORE_PATH,
   STREAM,
-  WORKSPACE,
   TRIM,
+  TRUST_SUBJECT,
+  WORKSPACE,
   createClient,
+  hooksFor,
 } from "./config.js";
+import { collectContext } from "./context/index.js";
 import { createHooks } from "./harness/index.js";
 import { describeTrust } from "./settings/trust.js";
 import { createProfile } from "./profile/index.js";
@@ -31,10 +34,17 @@ if (NEEDS_TRUST) {
   console.error("\x1b[2m  有効にするには、このディレクトリで hma trust を実行してください。\x1b[0m");
 }
 
+const sections = await collectContext({
+  workspace: WORKSPACE,
+  mode: APPROVAL,
+  sessionStart: hooksFor(!NEEDS_TRUST).SessionStart ?? [],
+});
+
 const sessions = new Sessions({
   client: createClient(),
   model: MODEL,
   profile,
+  sections,
   contextLimit: CONTEXT_LIMIT,
   trim: TRIM,
   stream: STREAM,

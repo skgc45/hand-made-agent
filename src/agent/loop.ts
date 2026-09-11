@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { render, summarize } from "./compact.js";
 import { type Fact, FactGraph, extractFacts } from "./graph.js";
-import { SystemPrompt } from "./prompt.js";
+import { type PromptSection, SystemPrompt } from "./prompt.js";
 import { MessageAccumulator } from "./stream.js";
 import { charCount, splitSafe, trimNaive, trimSafe } from "./trim.js";
 import type { Toolset } from "./toolset.js";
@@ -100,6 +100,8 @@ export type AgentConfig = {
   system: string;
   /** 何のエージェントかは、ここに何を渡すかで決まる */
   toolset: Toolset;
+  /** 起動時に集めた文脈。IO を伴うので、集めるのは Agent の外 */
+  sections?: PromptSection[];
   contextLimit: number;
   trim: string;
   /** ツール実行の直前に呼ばれる唯一の穴。承認もレート制限もここに挿す */
@@ -184,6 +186,9 @@ export class Agent {
     this.toolsChars = JSON.stringify(config.toolset.tools).length;
     this.threadId = config.threadId ?? randomUUID();
     this.prompt = new SystemPrompt(config.system);
+    for (const { heading, body } of config.sections ?? []) {
+      this.prompt.set(heading, body);
+    }
     this.messages = [this.prompt.message()];
   }
 

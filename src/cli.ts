@@ -2,24 +2,27 @@ import { randomUUID } from "node:crypto";
 import * as readline from "node:readline/promises";
 import { parseArgs } from "node:util";
 import {
+  APPROVAL,
   CONTEXT_LIMIT,
   MODEL,
   NEEDS_TRUST,
-  SETTINGS_HOOKS,
-  SETTINGS_RULES,
-  TRUST_PRINT,
-  TRUST_SUBJECT,
   PROFILE,
   SETTINGS_FILES,
+  SETTINGS_HOOKS,
+  SETTINGS_RULES,
   STORE,
   STORE_PATH,
   STREAM,
-  WORKSPACE,
   TRIM,
+  TRUST_PRINT,
+  TRUST_SUBJECT,
+  WORKSPACE,
   createClient,
   describeConfig,
+  hooksFor,
 } from "./config.js";
-import { createHooks } from "./harness/index.js";
+import { collectContext } from "./context/index.js";
+import { createHooks, planDenies } from "./harness/index.js";
 import { describeTrust, recordTrust } from "./settings/trust.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
@@ -118,6 +121,14 @@ if (opts.config) {
       })),
     ),
     ...SETTINGS_RULES,
+    ...(APPROVAL === "plan"
+      ? (planDenies(current).deny ?? []).map((rule) => ({
+          action: "deny" as const,
+          rule,
+          source: "plan モード",
+          layer: undefined,
+        }))
+      : []),
   ].sort((a, b) => ORDER.indexOf(a.action) - ORDER.indexOf(b.action));
 
   console.log("\n権限ルール（deny > allow > ask の順に見る。どれにも当たらなければ通す）:");
@@ -144,6 +155,20 @@ if (opts.config) {
       `  ${pad(event, eventWidth)}  ${pad(hook.matcher ?? "*", matcherWidth)}  ${hook.command}  \x1b[2m${source}${off ? " — 未信頼のため無効（hma trust）" : ""}\x1b[0m`,
     );
   }
+
+  const context = await collectContext({
+    workspace: opts.workspace ?? WORKSPACE,
+    mode: APPROVAL,
+    sessionStart: hooksFor(!NEEDS_TRUST).SessionStart ?? [],
+  });
+  console.log("\nsystem プロンプトに載る文脈:");
+  if (context.length === 0) console.log("  （なし）");
+  const headingWidth = Math.max(1, ...context.map((c) => cells(c.heading)));
+  for (const { heading, body } of context) {
+    console.log(
+      `  ${pad(heading, headingWidth)}  \x1b[2m${body.length} 文字\x1b[0m`,
+    );
+  }
   process.exit(0);
 }
 
@@ -168,11 +193,18 @@ const threadId = opts.new ? randomUUID() : (opts.thread ?? "cli");
 
 const trusted = NEEDS_TRUST ? await askTrust() : true;
 
+const sections = await collectContext({
+  workspace: profile.workspace,
+  mode: APPROVAL,
+  sessionStart: hooksFor(trusted).SessionStart ?? [],
+});
+
 const transport = new StdioTransport(threadId);
 const sessions = new Sessions({
   client: createClient(),
   model: MODEL,
   profile,
+  sections,
   contextLimit: CONTEXT_LIMIT,
   trim: TRIM,
   stream: STREAM,

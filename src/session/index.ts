@@ -7,6 +7,7 @@ import {
   type BeforeToolCall,
   type BeforeUserMessage,
 } from "../agent/loop.js";
+import type { PromptSection } from "../agent/prompt.js";
 import type { Profile } from "../profile/index.js";
 import { MessageQueue } from "./queue.js";
 import type { Store, ThreadSummary } from "../store/index.js";
@@ -16,6 +17,8 @@ export type SessionsConfig = {
   client: OpenAI;
   model: string;
   profile: Profile;
+  /** 起動時に集めた文脈。全スレッドで同じものを使う */
+  sections?: PromptSection[];
   contextLimit: number;
   trim: string;
   beforeToolCall?: BeforeToolCall;
@@ -64,6 +67,7 @@ export class Sessions {
         client,
         model,
         profile,
+        sections,
         contextLimit,
         trim,
         beforeToolCall,
@@ -77,6 +81,7 @@ export class Sessions {
         model,
         system: profile.system,
         toolset: profile.toolset,
+        sections,
         contextLimit,
         trim,
         beforeToolCall,

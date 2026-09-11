@@ -1,5 +1,7 @@
 import type OpenAI from "openai";
 
+export type PromptSection = { heading: string; body: string };
+
 /**
  * system メッセージの組み立て。base のあとに、名前の付いた節を並べる。
  * compaction も事実グラフも messages[0] を作り直すので、文字列連結はここだけにする。
