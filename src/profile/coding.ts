@@ -6,7 +6,7 @@ export function coding(workspace: string): Profile {
     name: "coding",
     workspace,
     toolset: createFileTools(workspace),
-    requiresApproval: new Set(["bash"]),
+    permissions: { ask: ["bash"] },
     system: `あなたはコーディングエージェントです。
 作業対象は ${workspace} の中だけです。
 ユーザーには日本語で答えてください。

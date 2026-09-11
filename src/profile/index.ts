@@ -1,4 +1,5 @@
 import type { Toolset } from "../agent/toolset.js";
+import type { PermissionSet } from "../permission/index.js";
 import { coding } from "./coding.js";
 import { sandbox } from "./sandbox.js";
 
@@ -11,8 +12,8 @@ export type Profile = {
   workspace: string;
   system: string;
   toolset: Toolset;
-  /** 実行前に人間に聞くツール */
-  requiresApproval: ReadonlySet<string>;
+  /** 既定の権限ルール。deny > allow > ask の順に見て、どれにも当たらなければ通す */
+  permissions: PermissionSet;
 };
 
 const builders: Record<string, (workspace: string) => Profile> = {

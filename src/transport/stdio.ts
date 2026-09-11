@@ -1,5 +1,5 @@
 import * as readline from "node:readline/promises";
-import type { AskFn } from "../approval.js";
+import type { AskFn } from "../harness/approval.js";
 import { CliRenderer, cyan, dim, yellow } from "../render/cli.js";
 import type { Sessions } from "../session/index.js";
 import type { Transport } from "./index.js";
@@ -8,7 +8,6 @@ import type { Transport } from "./index.js";
 export class StdioTransport implements Transport {
   private readonly rl: readline.Interface;
   private readonly closing = new AbortController();
-  private readonly autoApproved = new Set<string>();
   private running?: AbortController;
   private asking = false;
 
@@ -38,22 +37,24 @@ export class StdioTransport implements Transport {
     }
   }
 
-  approve: AskFn = async (name, args) => {
-    if (this.autoApproved.has(name)) return true;
-
+  approve: AskFn = async ({ name, arguments: args, suggestedRule }) => {
     console.log(yellow(`\n  ${name} を実行しようとしています:`));
     console.log(yellow(`  ${args}`));
     const answer = await this.ask(
       yellow("  許可する? [y]es / [n]o / [a]lways: "),
     );
-    if (answer === null) return false;
+    if (answer === null) return { approved: false };
 
     const choice = answer.trim().toLowerCase();
     if (choice === "a") {
-      this.autoApproved.add(name);
-      return true;
+      // 何を常に許可したのか、確定する前に見せて直させる
+      const edited = await this.ask(
+        yellow(`  許可するルール [${suggestedRule}]: `),
+      );
+      if (edited === null) return { approved: false };
+      return { approved: true, rule: edited.trim() || suggestedRule };
     }
-    return choice === "y" || choice === "";
+    return { approved: choice === "y" || choice === "" };
   };
 
   async start(sessions: Sessions): Promise<void> {

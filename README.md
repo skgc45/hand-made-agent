@@ -58,7 +58,7 @@ npm run typecheck
 | `LLM_BASE_URL` | Gemini の OpenAI 互換 | Ollama / Groq に差し替え可能 |
 | `CONTEXT_LIMIT` | `0`（無効） | トリム発動のトークン閾値。実験では `1200` |
 | `TRIM` | `none` | `none` / `naive` / `safe` / `compact` / `graph` |
-| `APPROVAL` | `ask` | `auto` で bash を自動承認 |
+| `APPROVAL` | `ask` | `auto` で承認を省く（`deny` ルールは効いたまま） |
 | `WORKSPACE` | `sandbox` | エージェントが触れる唯一の場所 |
 | `PROFILE` | `sandbox` | `sandbox` / `coding` |
 | `STREAM` | 有効 | `0` で応答が出揃ってから1回で流す |
@@ -184,7 +184,8 @@ CLI とサーバーは同じ `.threads/agent.db` を見るので、`hma list` �
 - [x] 3. 会話が長くなってコンテキストが溢れる
 - [x] 4. 捨てる代わりに要約する（compaction）
 - [x] 5. 進捗を UI に出したくなる（AG-UI）+ 承認を Interrupt に載せ替え
-- [x] 6. プロセスを再起動すると履歴が消える（永続化）← いまここ
+- [x] 6. プロセスを再起動すると履歴が消える（永続化）
+- [x] 7. 承認がツール名でしか効かない（権限ルール）← いまここ
 
 各ステップは「素で書くと困る → だからフレームワークにその機能がある」を体感するのが目的。
 
@@ -206,6 +207,17 @@ CLI とサーバーは同じ `.threads/agent.db` を見るので、`hma list` �
                           └→ web/src/main.tsx (CopilotKit)
 ```
 
+`profile/` と `harness/` はこの縦の流れと**直交している**。エントリ（`cli.ts` /
+`serve.ts`）が両方を組み立てて `session/` に渡す。
+
+```
+  profile/     何のエージェントか（system / toolset / 既定の権限ルール）
+
+  harness/     ツール実行に何を挿すか。いまは承認ゲートだけ
+    ↑
+  permission/  ルールで allow / ask / deny を決める
+```
+
 ```
 bin/hma.js             hma コマンド。サブコマンドを entry に振り分ける
 src/cli.ts             エントリ: 層を組み立てて StdioTransport を起動
@@ -219,7 +231,9 @@ src/agent/tools.ts     createFileTools(workspace) — ファイル操作ツー�
 src/agent/toolset.ts   interface Toolset（loop.ts が知る唯一のツールの姿）
 src/agent/hooks.ts     composeBefore / composeAfter — フックを1本に束ねる
 src/harness/index.ts   createHooks() — ツール実行に挿すものを組み立てる
-src/approval.ts        承認ゲートを beforeToolCall フックとして組み立てる
+src/harness/approval.ts  権限の判定を承認ゲート（待つ / Interrupt）に変換する
+src/permission/rules.ts  ルールの構文とマッチング（前方一致 / glob / 連結の分割）
+src/permission/index.ts  deny > allow > ask の判定と、セッション中の allow
 src/profile/index.ts   Profile 型と createProfile()
 src/profile/sandbox.ts   sandbox を眺めるアシスタント
 src/profile/coding.ts    コーディングエージェント
@@ -701,6 +715,96 @@ gemini-3.5-flash-lite / sqlite:.threads/agent.db / thread cli（履歴 2 件を�
 CLI は既定でスレッド `cli` に書く。`--thread <id>` で切り替え、`--new` で新しい UUID、`--list` で一覧。
 CLI には `approve` があるので `pending` は発生しない。保存されるのは会話と計測値だけ。
 
+## ステップ7 で理解すること — ツール名では粗すぎる
+
+ステップ2 の承認ゲートは `requiresApproval: Set(["bash"])` だった。ツール名でしか
+判断できないので、選べるのは2つしかない。
+
+- 毎回聞く → `ls` でも止まる
+- `[a]lways` で通す → 以降 `rm -rf` まで通る
+
+しかも `[a]lways` は `StdioTransport` の `Set` に入るだけで、プロセスが死ねば消える。
+
+### ルールにする
+
+`tool` か `tool(pattern)`。pattern の読み方は引数で決まる。
+
+```
+bash                    bash なら何でも
+bash(npm run test:*)    末尾 :* は前方一致
+write_file(src/**)      path を見るツールは glob
+```
+
+引数のどこを見るかにツールごとの表は持たない。`command` があればコマンド、無ければ
+`path`。MCP でツールが増えても表を足さずに済む。
+
+### 優先順位
+
+```
+deny → allow → ask → 既定（通す）
+```
+
+`deny` は `APPROVAL=auto` でも効く。既定が「通す」なのは、いまのプロファイルが
+「bash だけ聞く」＝それ以外は通す、という現状を壊さないため。
+
+### 連結コマンドで破れる
+
+ここが素で書くと必ず落ちる穴。
+
+```
+bash(npm run test:*) を許可した状態で
+npm run test && rm -rf /      ← 前方一致で通ってしまう
+```
+
+`&&` `||` `;` `|` と改行で切って、**全部の区間が allow に当たったときだけ通す**。
+`deny` は逆に**1区間でも当たれば**止める。
+
+クォートの中までは見ていない。`echo "a && b"` は余計に切れるが、切りすぎた側は
+allow に当たらなくなるだけなので、緩む方向には壊れない。
+
+前方一致にはもう1つ、コマンド置換の穴がある。
+
+```
+bash(npm run test:*) を許可した状態で
+npm run test $(rm -rf /)      ← 先頭が一致する
+```
+
+中身を別に評価しないと判定できないので、**`$(` とバッククォートを含む区間は allow に
+一致させない**（ask に落とす）ことにした。
+
+### 前方一致は語の途中で切らない
+
+```
+bash(npm run test:*) は npm run tests-of-doom に当たらない
+```
+
+一致した残りが空白で始まるときだけ通す。素の `startsWith` だけだと、名前の似た別の
+コマンドを巻き込む。
+
+### 実測: 書き換えたルールがその場で効く
+
+http で確かめた。承認 UI には**提案されたルールが出て、確定前に直せる**。
+
+1. `ls -1` で Interrupt。metadata に `suggestedRule: bash(ls -1:*)`
+2. `{"approved":true,"rule":"bash(ls:*)"}` で再開（提案より**広いルールに書き換えた**）
+3. 次の `ls -1` は聞かれずに実行された
+4. `ls -1 | head -2` は聞かれた。`head -2` が allow に当たらないため
+
+4 が出るのが目的。ツール名で持っていたときは、ここが素通りしていた。
+
+### ⚠️ これは防御ではない
+
+`cwd` がセキュリティ境界でないのと同じで、権限ルールも**事故を減らすだけ**。シェルの
+構文を正しく解釈しているわけではないので、抜ける書き方はいくらでもある。本気で閉じる
+ならプロセスの外側（コンテナ / seatbelt）が要る。
+
+### まだやっていないこと
+
+- **保存先。** `[a]lways` はプロセスが生きている間だけ。設定ファイルはステップ8
+- **`acceptEdits` / `plan` モード。** いまのプロファイルは編集系を聞いていないので
+  `acceptEdits` は `ask` と同じ挙動にしかならない。`plan` は「書けない」ことを system
+  プロンプト側でも伝えないと、モデルが deny を食って空回りするだけになる
+
 ## AG-UI はどこに位置するのか — エージェント関連プロトコルの地図
 
 AG-UI は「エージェント界隈のプロトコル一族」の一つで、層ごとに役割が分かれている。
@@ -954,6 +1058,7 @@ const result =
 ```
 
 `requiresApproval` も承認の文言も `src/approval.ts`（29行）に移った。
+（`requiresApproval` はステップ7 で権限ルールに置き換えた。当時の形として残す）
 
 ```ts
 export function approvalHook(ask?: AskFn): BeforeToolCall {

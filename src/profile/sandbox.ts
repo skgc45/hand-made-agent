@@ -7,7 +7,7 @@ export function sandbox(workspace: string): Profile {
     name: "sandbox",
     workspace,
     toolset: createFileTools(workspace),
-    requiresApproval: new Set(["bash"]),
+    permissions: { ask: ["bash"] },
     system: `あなたはファイル操作ができるアシスタントです。
 作業対象は ${workspace} の中だけです。
 ユーザーには日本語で答えてください。

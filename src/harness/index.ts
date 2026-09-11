@@ -1,7 +1,8 @@
 import { composeAfter, composeBefore } from "../agent/hooks.js";
 import type { AfterToolCall, BeforeToolCall } from "../agent/loop.js";
-import { type AskFn, approvalHook } from "../approval.js";
+import { type AskFn, approvalHook } from "./approval.js";
 import { APPROVAL } from "../config.js";
+import { createPermissions } from "../permission/index.js";
 import type { Profile } from "../profile/index.js";
 
 export type HarnessOptions = {
@@ -15,14 +16,12 @@ export type Hooks = {
   afterToolCall?: AfterToolCall;
 };
 
-const approveAll: AskFn = async () => true;
-
 /** ツール実行に挿すものを1箇所で束ねる。増えていくのはこの配列 */
 export function createHooks({ profile, ask }: HarnessOptions): Hooks {
+  const permissions = createPermissions(profile.permissions, APPROVAL);
+
   return {
-    beforeToolCall: composeBefore([
-      approvalHook(profile.requiresApproval, APPROVAL === "auto" ? approveAll : ask),
-    ]),
+    beforeToolCall: composeBefore([approvalHook(permissions, ask)]),
     afterToolCall: composeAfter([]),
   };
 }

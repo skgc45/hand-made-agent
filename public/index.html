@@ -132,7 +132,18 @@
         box.querySelector("code").textContent =
           toolArgs.get(interrupt.toolCallId) ?? "";
 
-        for (const [label, approved] of [["許可", true], ["拒否", false]]) {
+        const suggested = interrupt.metadata?.suggestedRule ?? "";
+
+        // 「常に許可」は承認と同時にルールを送る。文字列はそのまま権限ルール
+        const choices = [["許可", { approved: true }], ["拒否", { approved: false }]];
+        if (suggested) {
+          choices.splice(1, 0, [
+            `常に許可: ${suggested}`,
+            { approved: true, rule: suggested },
+          ]);
+        }
+
+        for (const [label, payload] of choices) {
           const btn = document.createElement("button");
           btn.textContent = label;
           btn.onclick = () => {
@@ -143,7 +154,7 @@
               {
                 interruptId: interrupt.id,
                 status: "resolved",
-                payload: { approved },
+                payload,
               },
             ]);
           };

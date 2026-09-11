@@ -1,4 +1,4 @@
-import type { AskFn } from "../approval.js";
+import type { AskFn } from "../harness/approval.js";
 import type { Sessions } from "../session/index.js";
 
 export interface Transport {
