@@ -237,6 +237,7 @@ src/agent/stream.ts    ストリーミングの delta を1つのメッセージ�
 src/agent/tools.ts     createFileTools(workspace) — ファイル操作ツール一式
 src/agent/toolset.ts   interface Toolset（loop.ts が知る唯一のツールの姿）
 src/agent/hooks.ts     composeBefore / composeAfter — フックを1本に束ねる
+src/agent/prompt.ts    SystemPrompt — base + 名前付きの節。system の文字列連結はここだけ
 src/harness/index.ts   createHooks() — ツール実行に挿すものを組み立てる
 src/harness/approval.ts  権限の判定を承認ゲート（待つ / Interrupt）に変換する
 src/permission/rules.ts  ルールの構文とマッチング（前方一致 / glob / 連結の分割）

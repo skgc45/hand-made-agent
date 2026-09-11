@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { render, summarize } from "./compact.js";
 import { type Fact, FactGraph, extractFacts } from "./graph.js";
+import { SystemPrompt } from "./prompt.js";
 import { MessageAccumulator } from "./stream.js";
 import { charCount, splitSafe, trimNaive, trimSafe } from "./trim.js";
 import type { Toolset } from "./toolset.js";
@@ -106,6 +107,8 @@ export type AgentConfig = {
 };
 
 const ABORTED = "中断されました";
+const SUMMARY = "これまでの経緯";
+const FACTS = "分かっている事実";
 
 function isRetryable(error: unknown): boolean {
   if (error instanceof OpenAI.APIUserAbortError) return false;
@@ -162,11 +165,17 @@ export class Agent {
   private totalPromptTokens = 0;
 
   private readonly toolsChars: number;
+  private readonly prompt: SystemPrompt;
 
   constructor(private readonly config: AgentConfig) {
     this.toolsChars = JSON.stringify(config.toolset.tools).length;
     this.threadId = config.threadId ?? randomUUID();
-    this.messages = [{ role: "system", content: config.system }];
+    this.prompt = new SystemPrompt(config.system);
+    this.messages = [this.prompt.message()];
+  }
+
+  private syncSystem(): void {
+    this.messages[0] = this.prompt.message();
   }
 
   /** 追記されたエントリを順に適用して状態を組み立て直す */
@@ -179,12 +188,14 @@ export class Agent {
         case "history":
           this.replace(entry.messages);
           this.summaryText = entry.summaryText;
+          this.prompt.set(SUMMARY, this.summaryText);
           break;
         case "pending":
           this.pending = entry.pending ?? undefined;
           break;
         case "fact":
           this.graph.apply(entry.facts);
+          this.prompt.set(FACTS, this.graph.render());
           break;
         case "usage":
           this.totalPromptTokens += entry.promptTokens;
@@ -192,6 +203,9 @@ export class Agent {
           break;
       }
     }
+    // 保存された messages[0] ではなく、いまの素材から組み直す。
+    // プロファイルを変えて同じスレッドを開いたとき、古い system が残らない
+    this.syncSystem();
   }
 
   private async poll(
@@ -538,10 +552,8 @@ export class Agent {
       const { added, superseded } = this.graph.apply(extracted.facts);
 
       this.replace(kept);
-      this.messages[0] = {
-        role: "system",
-        content: `${this.config.system}\n\n## 分かっている事実\n${this.graph.render()}`,
-      };
+      this.prompt.set(FACTS, this.graph.render());
+      this.syncSystem();
       await this.record({ kind: "fact", facts: extracted.facts });
       await this.record({
         kind: "history",
@@ -578,10 +590,8 @@ export class Agent {
       this.totalPromptTokens += summary.promptTokens;
 
       this.replace(kept);
-      this.messages[0] = {
-        role: "system",
-        content: `${this.config.system}\n\n## これまでの経緯\n${this.summaryText}`,
-      };
+      this.prompt.set(SUMMARY, this.summaryText);
+      this.syncSystem();
       await this.record({
         kind: "history",
         messages: [...this.messages],
