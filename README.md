@@ -800,15 +800,39 @@ http で確かめた。承認 UI には**提案されたルールが出て、確
 
 4 が出るのが目的。ツール名で持っていたときは、ここが素通りしていた。
 
+### 連結コマンドには「常に許可」を出さない
+
+最初はここで提案ルールを出していたが、**受け入れても同じコマンドがまた聞かれる**。
+
+```
+コマンド : npm test && ls
+提案ルール: bash(npm test:*)   ← ls が allow に当たらないので、結局 ask のまま
+```
+
+区間が複数あるコマンドと、コマンド置換を含むコマンドでは提案を出さないことにした
+（CLI では自分で書けるし、書かなければ今回だけの承認になる）。**当たらないルールを
+勧めるくらいなら、何も勧めないほうがいい。**
+
 ### ⚠️ これは防御ではない
 
 `cwd` がセキュリティ境界でないのと同じで、権限ルールも**事故を減らすだけ**。シェルの
 構文を正しく解釈しているわけではないので、抜ける書き方はいくらでもある。本気で閉じる
 ならプロセスの外側（コンテナ / seatbelt）が要る。
 
+実際に抜けられた。`deny: ["bash(rm:*)"]` の状態で `rm memo.txt` を頼むと、拒否された
+モデルは**綴りを変えて同じことをやろうとする**。
+
+```
+1回目  rm memo.txt                                              → block
+2回目  python3 -c "import os; os.remove('memo.txt') if ..."     → ask
+```
+
+2回目は `rm:*` に当たらないので `deny` をすり抜けている。止まったのは「ルールに
+当たらないものは聞く」側の動きで、`deny` が効いたからではない。**`deny` はコマンドの
+綴りを止めるだけで、意図は止めない。**
+
 ### まだやっていないこと
 
-- **保存先。** `[a]lways` はプロセスが生きている間だけ。設定ファイルはステップ8
 - **`acceptEdits` / `plan` モード。** いまのプロファイルは編集系を聞いていないので
   `acceptEdits` は `ask` と同じ挙動にしかならない。`plan` は「書けない」ことを system
   プロンプト側でも伝えないと、モデルが deny を食って空回りするだけになる
@@ -1759,7 +1783,7 @@ ClickHouse クライアントライブラリは足していない。HTTP に JSO
 CREATE TABLE agent_events (
   ts, thread_id, run_id, profile, model,
   type,              -- RUN_STARTED / TOOL_CALL_START / CUSTOM …
-  name,              -- CUSTOM の種類: usage / compact / graph / retry / steering
+  name,              -- CUSTOM の種類: usage / compact / graph / retry / steering / gate
   tool, tool_call_id, content,
   prompt_tokens, completion_tokens, chars_per_token,
   payload            -- CUSTOM の値をそのまま JSON で
@@ -1852,6 +1876,66 @@ FROM agent_events WHERE name='retry' GROUP BY thread_id
 > 列を後から足したので、古い行は `tool_call_id` と `content` が空。
 > join するクエリは `tool_call_id != ''` で除外する（しないと空 id 同士が
 > 総当たりで結合して、件数が桁違いに膨らむ）。
+
+### 権限の判定を数える
+
+ステップ7 で承認をルールにしたあと、**その効果を数字で言えないことに気付いた。**
+`allow` で通したのか、そもそもルールに当たらなかったのかは、AG-UI のイベント列に
+出てこない。`ask` に至っては `RUN_FINISHED` の `outcome` にしか無く、行に残らない。
+
+```
+perm-allow │ TOOL_CALL_START → … → TOOL_CALL_RESULT   ← 通した
+perm-ask   │ TOOL_CALL_START → … → RUN_FINISHED       ← 聞いた（結果が無いだけ）
+```
+
+**allow と ask が計測上ほぼ同じ形**になる。`TOOL_CALL_START` と `TOOL_CALL_RESULT` を
+anti join すれば「結果が無い呼び出し」は数えられるが、承認待ちと中断とクラッシュの
+区別が付かない。
+
+そこで `beforeToolCall` の結果を `CUSTOM` イベントに1本足した。**表示には使わない、
+計測のためだけのイベント**はこれが最初。
+
+```
+gate  { decision: "run" | "ask" | "block", tool, arguments }
+```
+
+判定の内訳:
+
+```sql
+SELECT JSONExtractString(payload,'decision') AS decision, count() AS n
+FROM agent_events WHERE name='gate' GROUP BY decision ORDER BY n DESC
+```
+
+```
+┌─decision─┬─n─┐
+│ ask      │ 2 │
+│ run      │ 1 │
+│ block    │ 1 │
+└──────────┴───┘
+```
+
+**どのコマンドが ask を引き起こしたか** — つまり、どの `allow` ルールを足せば聞かれる
+回数が減るかが、そのまま出る。
+
+```sql
+SELECT JSONExtractString(JSONExtractString(payload,'arguments'),'command') AS command,
+       count() AS n
+FROM agent_events
+WHERE name='gate' AND JSONExtractString(payload,'decision')='ask'
+GROUP BY command ORDER BY n DESC LIMIT 5
+```
+
+```
+┌─command───────────────────────────────────────┬─n─┐
+│ head -1 memo.txt                              │ 1 │
+│ python3 -c "import os; os.remove('memo.txt')" │ 1 │
+└───────────────────────────────────────────────┴───┘
+```
+
+2行目は `deny: ["bash(rm:*)"]` を迂回しようとしたもの。**ルールの抜けが計測に出る。**
+
+> ⚠️ `arguments` をそのまま流しているので、**コマンドに書いた秘密は ClickHouse に残る**。
+> ローカルの実験用と割り切っている。
 
 ## 記憶を構造で持つ — TRIM=graph（結果: 負けた）
 

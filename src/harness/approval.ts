@@ -8,7 +8,8 @@ const BLOCKED =
 export type ApprovalRequest = {
   name: string;
   arguments: string;
-  suggestedRule: string;
+  /** 当たるルールを作れないときは無い。UI は「常に許可」を出さない */
+  suggestedRule?: string;
 };
 
 export type ApprovalResult = {
@@ -92,7 +93,9 @@ export function approvalHook(
       interrupt: {
         reason: "tool_approval",
         message: `${name} を実行しますか？`,
-        metadata: { name, arguments: args, suggestedRule },
+        metadata: suggestedRule
+          ? { name, arguments: args, suggestedRule }
+          : { name, arguments: args },
         responseSchema: {
           type: "object",
           properties: {

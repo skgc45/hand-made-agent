@@ -402,6 +402,23 @@ export class Agent {
         signal,
       );
 
+      // 通したのか聞いたのか止めたのかは、ここでしか分からない。
+      // 表示には出さないが、計測に残さないと承認の回数を数えられない
+      yield {
+        type: EventType.CUSTOM,
+        name: "gate",
+        value: {
+          decision:
+            decision?.kind === "suspend"
+              ? "ask"
+              : decision?.kind === "block"
+                ? "block"
+                : "run",
+          tool: name,
+          arguments: args,
+        },
+      };
+
       if (decision?.kind === "suspend") {
         const interruptId = randomUUID();
         this.pending = {

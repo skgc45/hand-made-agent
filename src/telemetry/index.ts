@@ -11,7 +11,7 @@ export type TelemetryRow = {
   profile: string;
   model: string;
   type: string;
-  /** CUSTOM の name（usage / trim / compact / graph / retry / steering） */
+  /** CUSTOM の name（usage / trim / compact / graph / retry / steering / gate） */
   name: string;
   tool: string;
   /** TOOL_CALL_START と TOOL_CALL_RESULT を突き合わせるため */
@@ -56,7 +56,8 @@ export function toRow(
     model: context.model,
     type: event.type,
     name: custom?.name ?? "",
-    tool: (toolCallName as string) ?? "",
+    // CUSTOM は toolCallName を持たないので、value.tool を同じ列に寄せる
+    tool: (toolCallName as string) ?? (value.tool as string) ?? "",
     tool_call_id: (toolCallId as string) ?? "",
     content: typeof content === "string" ? content.slice(0, 200) : "",
     prompt_tokens: Number(value.promptTokens ?? 0),

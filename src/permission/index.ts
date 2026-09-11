@@ -19,8 +19,8 @@ export type Permissions = {
   decide(name: string, args: unknown): Decision;
   /** [a]lways の行き先。プロセスが生きている間だけ有効（永続化はステップ8） */
   allowForSession(text: string): void;
-  /** 承認 UI に出す「このルールを許可しますか」の初期値 */
-  suggestRule(name: string, args: unknown): string;
+  /** 承認 UI に出す初期値。当たるルールを作れないときは undefined */
+  suggestRule(name: string, args: unknown): string | undefined;
 };
 
 /** コマンド置換は中身を別に評価しないと素通りするので、allow には一致させない */
@@ -71,8 +71,14 @@ export function createPermissions(
     },
 
     suggestRule(name, args) {
-      const [subject] = subjectsOf(args);
+      const subjects = subjectsOf(args);
+      // 区間が複数あると1つ許可しても残りで止まる。当たらないルールは勧めない
+      if (subjects.length !== 1) return undefined;
+
+      const [subject] = subjects;
       if (!subject) return name;
+      if (!safe(subject)) return undefined;
+
       return formatRule({
         tool: name,
         pattern:

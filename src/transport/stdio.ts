@@ -49,14 +49,16 @@ export class StdioTransport implements Transport {
     if (choice === "a" || choice === "s") {
       // 何を常に許可したのか、確定する前に見せて直させる
       const edited = await this.ask(
-        yellow(`  許可するルール [${suggestedRule}]: `),
+        yellow(
+          suggestedRule
+            ? `  許可するルール [${suggestedRule}]: `
+            : "  許可するルール（連結コマンドなので提案なし。空なら今回だけ）: ",
+        ),
       );
       if (edited === null) return { approved: false };
-      return {
-        approved: true,
-        rule: edited.trim() || suggestedRule,
-        save: choice === "s",
-      };
+
+      const rule = edited.trim() || suggestedRule;
+      return { approved: true, rule, save: rule !== undefined && choice === "s" };
     }
     return { approved: choice === "y" || choice === "" };
   };
