@@ -35,6 +35,7 @@ hma code path/to/x  # 作業対象を指定
 hma serve           # HTTP + SSE（自前フロント: http://localhost:3000）
 hma list            # 保存されているスレッド一覧
 hma config          # いま効いている設定と権限ルール（どこから来たかつき）
+hma trust           # .hma のフックと allow を確認して信頼する
 hma --thread foo    # スレッドを指定（--new で新規）
 ```
 
@@ -191,7 +192,8 @@ CLI とサーバーは同じ `.threads/agent.db` を見るので、`hma list` �
 - [x] 6. プロセスを再起動すると履歴が消える（永続化）
 - [x] 7. 承認がツール名でしか効かない（権限ルール）
 - [x] 8. 環境変数だけだと、決めたことを共有できない（設定ファイル）
-- [x] 9. 効いている設定が分からなくなる（hma config）← いまここ
+- [x] 9. 効いている設定が分からなくなる（hma config）
+- [x] 10. フックを足すたびにコードを触ることになる（外部プロセス）← いまここ
 
 各ステップは「素で書くと困る → だからフレームワークにその機能がある」を体感するのが目的。
 
@@ -238,9 +240,12 @@ src/agent/loop.ts      Agent クラス。AG-UI イベントを yield する asyn
 src/agent/stream.ts    ストリーミングの delta を1つのメッセージに畳む
 src/agent/tools.ts     createFileTools(workspace) — ファイル操作ツール一式
 src/agent/toolset.ts   interface Toolset（loop.ts が知る唯一のツールの姿）
-src/agent/hooks.ts     composeBefore / composeAfter — フックを1本に束ねる
+src/agent/compose.ts   composeBefore / composeAfter — フックを1本に束ねる
 src/agent/prompt.ts    SystemPrompt — base + 名前付きの節。system の文字列連結はここだけ
 src/harness/index.ts   createHooks() — ツール実行に挿すものを組み立てる
+src/harness/external.ts  設定から刺したフックを、ループの穴の形に変換する
+src/hooks/index.ts     外部プロセスの起動と、終了コード・標準出力の解釈
+src/settings/trust.ts  .hma の「緩める方向」の中身に指紋を取り、本人の確認を覚える
 src/harness/approval.ts  権限の判定を承認ゲート（待つ / Interrupt）に変換する
 src/permission/rules.ts  ルールの構文とマッチング（前方一致 / glob / 連結の分割）
 src/permission/index.ts  deny > allow > ask の判定と、セッション中の allow
@@ -987,6 +992,187 @@ $ hma config
 
 ステップ10 でフックを設定ファイルから刺せるようにすると、「なぜこのコマンドが走ったのか」
 が設定ファイルを読まないと分からなくなる。`hma config` はその答え合わせに使う。
+
+## ステップ10 で理解すること — フックがコードの中にあると誰も刺せない
+
+土台A で `beforeToolCall` を合成できるようにしたが、**刺せるのは TypeScript を書ける
+人だけ**だった。「編集したら必ず `tsc --noEmit` を走らせる」をやるのに `loop.ts` を
+触るのはおかしい。
+
+### 設定から刺す
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "bash", "command": ".hma/scripts/block-secrets.sh" }
+    ],
+    "PostToolUse": [
+      { "matcher": "edit_file", "command": "npm run typecheck 2>&1 | tail -5" }
+    ],
+    "UserPromptSubmit": [{ "command": ".hma/scripts/add-context.sh" }],
+    "Stop": [{ "command": ".hma/scripts/checklist.sh" }]
+  }
+}
+```
+
+`matcher` は**権限ルールと同じ書式**（`bash` / `bash(npm run test:*)` /
+`write_file(src/**)`）。ツールの引数のどこを見るかの決まりを2つ持ちたくない。
+省略すると全部に当たる。
+
+### 契約は終了コードで決まる
+
+```
+exit 0   通す。標準出力が JSON なら decision / reason / additionalContext を読む
+         JSON でなければ、その文字列がそのまま context になる
+exit 2   止める。標準エラーがそのまま「なぜ止めたか」としてモデルに渡る
+その他   警告して通す。フックの失敗でエージェントは止めない
+```
+
+最後の1行が効く。フックはユーザーが書いた野良スクリプトなので、**落ちるのが普通**。
+落ちたら止まる作りにすると、誰も怖くて刺せない。タイムアウト（既定30秒）も同じ扱い。
+
+入力は stdin に JSON で渡す。フックが stdin を読まずに終わると EPIPE になるが、
+これは失敗ではないので握り潰す。
+
+### 4つの穴
+
+| イベント | 刺さる場所 | できること |
+|---|---|---|
+| `PreToolUse` | `beforeToolCall` | `block` で止める / `allow` で承認を飛ばす |
+| `PostToolUse` | `afterToolCall` | ツール結果に追記する |
+| `UserPromptSubmit` | `run()` の冒頭 | 入力を止める / 文脈を足す |
+| `Stop` | `getFollowUpMessages` | 止まろうとしたところで続けさせる |
+
+**`Stop` はすでに穴が空いていた。** ステップ「pi を元にエンハンスする」で入れた
+follow-up キューがそのままの形だったので、Sessions の口を足すだけで済んだ。
+
+### フックは権限ルールより先に見る
+
+```ts
+composeBefore([
+  preToolUse(HOOKS.PreToolUse),          // 先
+  approvalHook(permissions, ask, save),  // 後
+])
+```
+
+土台A で決めた「先に値を返したほうが勝つ」がそのまま効く。つまり**フックの `allow` は
+`deny` ルールも飛ばす**。危なく見えるが、フックもルールも同じ設定ファイルから来るので
+信頼の度合いは同じ。分けても嘘の安心にしかならない。
+
+### `allow` をループの語彙に足した
+
+`BeforeToolCallResult` に `{ kind: "allow" }` を足した。「undefined を返せば実行する」
+のままだと、**フックが「実行していい」と言っても後ろの承認ゲートに聞きにいってしまう**。
+`loop.ts` 側は suspend でも block でもないので何も変えずに済んだ。
+
+### Stop フックは1 run に1回しか呼ばない
+
+```
+止まろうとする → Stop が「続けろ」と言う → 答える → 止まろうとする → …
+```
+
+素直に書くと止まれなくなる。Sessions が run ごとに印を持って、**2回目以降は呼ばない**。
+
+### 実測
+
+`ask: ["bash"]` のプロジェクトに4つ刺して動かした。
+
+```
+PreToolUse   bash  block-secrets.sh   .env を含むコマンドを exit 2 で止める
+PreToolUse   bash  auto-allow-ls.sh   ls で始まれば {"decision":"allow"}
+PostToolUse  bash  count-lines.sh     結果の行数を数えて足す
+UserPromptSubmit   add-context.sh     「回答は必ず了解で始めること」を足す
+```
+
+- `ls -1` は **承認を聞かれずに実行**され、結果が
+  `memo.txt\n\n[フック] 結果は 1 行でした` になった（allow と PostToolUse が同時に効いた）
+- `cat .env` はツール結果が `.env には触れない決まりです。` になった。承認は**聞かれていない**
+  （フックのほうが先なので）
+- モデルの答えは `了解` で始まった
+- `Stop` に「毎回続けろ」と言うフックを刺しても、1往復だけ伸びて止まった
+
+なお、これらは**すべて `hma trust` で承認したあとの話**（次の節）。
+
+`gate` イベントにもそのまま出る。`allow` は `run`、`block` は `block`。
+
+### ⚠️ 「設定から刺せる」は「任意のコードが走る」ということ
+
+フックは**承認を通らない**。実測するとこうなる。
+
+```
+フックから見た環境変数: SECRET-abcdef     ← GEMINI_API_KEY がそのまま見える
+フックの cwd:          起動したディレクトリ
+フックのユーザー:        あなた自身
+```
+
+そして `.hma/settings.json` は**コミットして共有する**ものなので、素直に作ると
+**そういうリポジトリを clone して `hma` を起動した瞬間に、他人の書いたコマンドが自分の
+権限で走る。**
+
+もう1つ、エージェント自身が経路になる。`hma code`（引数なし＝ workspace が cwd）だと
+`write_file` は承認を通らないので、こう書ける。
+
+```
+write_file .hma/settings.json        -> 57 文字を書き込みました      ← フックを仕込む
+write_file .hma/settings.local.json  -> 34 文字を書き込みました      ← allow: ["bash"] を書き足す
+```
+
+ステップ7 で見た「`deny` は綴りを止めるだけ」よりも深い。**ルールそのものを次回のために
+書き換えられる。**
+
+### だから、初回に本人へ見せて聞く
+
+`.hma` の中身のうち**緩める方向のものだけ**（フックと `allow`）を並べて聞く。
+
+```
+$ hma
+このディレクトリの .hma に、あなたの権限で動くものが入っています:
+  実行  PreToolUse (bash) .hma/scripts/block-secrets.sh  ← .hma/settings.json
+  実行  Stop .hma/scripts/checklist.sh                   ← .hma/settings.json
+  許可  bash(ls:*)                                       ← .hma/settings.local.json
+
+実行はあなた自身の権限で、承認を通らずに行われます（環境変数も見えます）。
+信頼しますか? [y]es / [n]o:
+```
+
+- **`deny` と `ask` は聞かない。** 締める方向なので、信頼が無くても効かせる
+- **`~/.hma` は聞かない。** 本人が置いたもの
+- 断っても止まらない。**フックと `allow` を落としたまま動く**
+- 承認したら、その内容の sha256 を `~/.hma/trust.json` に**プロジェクトの絶対パスごと**記録する
+
+内容が1文字でも変われば指紋が変わるので、また聞く（実測: `.hma/settings.json` を1文字
+変えたら5本とも「未信頼のため無効」に戻った）。ただし**本人が `[s]ave` で足した `allow`
+は聞き直さない**。承認したのは本人なので、書いたあとに指紋を取り直している。
+
+`hma serve` は入力を待てないので聞けない。**無効にして、何が無効かと `hma trust` を
+案内する**。
+
+### 実測
+
+| | 未信頼 | 信頼後 |
+|---|---|---|
+| `ls -1`（`auto-allow-ls.sh` が `allow` を返す） | 承認を聞かれる（`gate: ask`） | 聞かれず実行 |
+| `PostToolUse` の追記 | 無し | `memo.txt\n\n[フック] 結果は 1 行でした` |
+
+### 残っている穴
+
+`bash` 経由の書き込み（`echo x > .hma/settings.json`）は `deny` できない。コマンドの
+中身からリダイレクト先を読むのは、ステップ7 で「やらない」と決めた領域。いま書ける
+一番強い対処はこれで、実測で効くことは確認した。
+
+```json
+"deny": ["write_file(.hma/**)", "edit_file(.hma/**)"]
+```
+
+### まだやっていないこと
+
+- **フック自身の計測。** `gate` は「止まった」ことしか言わず、**どのフックが止めたか**は
+  残らない。フックはイベントを yield できる場所にいないので、`gate` と同じ形の問題が
+  もう一段深いところにある
+- **`SessionStart`。** これは実質「起動時に文脈を足す」で、ステップ11 の `AGENTS.md` や
+  環境ブロックと同じ口に乗せるべきなので、そちらでまとめてやる
+- **`PreToolUse` の `additionalContext`。** 置き場所が無いので読み捨てている
 
 ## AG-UI はどこに位置するのか — エージェント関連プロトコルの地図
 

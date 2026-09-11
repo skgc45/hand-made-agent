@@ -5,6 +5,7 @@ import {
   type AgentEvent,
   Agent,
   type BeforeToolCall,
+  type BeforeUserMessage,
 } from "../agent/loop.js";
 import type { Profile } from "../profile/index.js";
 import { MessageQueue } from "./queue.js";
@@ -19,6 +20,9 @@ export type SessionsConfig = {
   trim: string;
   beforeToolCall?: BeforeToolCall;
   afterToolCall?: AfterToolCall;
+  beforeUserMessage?: BeforeUserMessage;
+  /** 止まろうとしたときに1 run に1回だけ呼ばれる */
+  onStop?: () => Promise<string[]>;
   stream?: boolean;
   store: Store;
   telemetry?: Telemetry;
@@ -31,6 +35,8 @@ export class Sessions {
   private readonly live = new Map<string, Agent>();
   private readonly queues = new Map<string, Record<QueueKind, MessageQueue>>();
   private readonly active = new Set<string>();
+  /** Stop フックを run に1回しか呼ばないための印。無いと止まれなくなる */
+  private readonly stopAsked = new Set<string>();
 
   constructor(private readonly config: SessionsConfig) {}
 
@@ -62,6 +68,7 @@ export class Sessions {
         trim,
         beforeToolCall,
         afterToolCall,
+        beforeUserMessage,
         stream,
         store,
       } = this.config;
@@ -74,10 +81,17 @@ export class Sessions {
         trim,
         beforeToolCall,
         afterToolCall,
+        beforeUserMessage,
         stream,
         append: (entry) => store.append(threadId, entry),
         getSteeringMessages: async () => queues.steering.drain(),
-        getFollowUpMessages: async () => queues.followUp.drain(),
+        getFollowUpMessages: async () => {
+          const queued = queues.followUp.drain();
+          if (queued.length > 0) return queued;
+          if (!this.config.onStop || this.stopAsked.has(threadId)) return [];
+          this.stopAsked.add(threadId);
+          return await this.config.onStop();
+        },
         threadId,
       });
       agent.replay(await store.load(threadId));
@@ -105,6 +119,7 @@ export class Sessions {
     let currentRunId = runId ?? "";
 
     this.active.add(threadId);
+    this.stopAsked.delete(threadId);
     try {
       // イベント列の2つ目の消費者。transport は表示に、こちらは計測に使う
       for await (const event of agent.run(userInput, runId, resume, signal)) {

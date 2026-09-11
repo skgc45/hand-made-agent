@@ -2,6 +2,12 @@ import fs from "node:fs";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  HOOK_EVENTS,
+  type HookConfig,
+  type HookEvent,
+  type HookSet,
+} from "../hooks/index.js";
 import { type PermissionSet, parseRule } from "../permission/index.js";
 
 export type Settings = {
@@ -19,9 +25,10 @@ export type Settings = {
   telemetry?: string;
   telemetryUrl?: string;
   permissions?: PermissionSet;
+  hooks?: HookSet;
 };
 
-type FieldKind = "string" | "number" | "boolean" | "permissions";
+type FieldKind = "string" | "number" | "boolean" | "permissions" | "hooks";
 
 const FIELDS: Record<keyof Settings, FieldKind> = {
   model: "string",
@@ -38,6 +45,7 @@ const FIELDS: Record<keyof Settings, FieldKind> = {
   telemetry: "string",
   telemetryUrl: "string",
   permissions: "permissions",
+  hooks: "hooks",
 };
 
 const USER = path.join(os.homedir(), ".hma", "settings.json");
@@ -95,6 +103,62 @@ function readPermissions(file: string, value: unknown): PermissionSet | undefine
 }
 
 /** 無ければ undefined。「置いていない」と「置いたが空」を区別する */
+function readHooks(file: string, value: unknown): HookSet | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    warn(file, "hooks はオブジェクトである必要があります");
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const set: HookSet = {};
+
+  for (const key of Object.keys(source)) {
+    if (!HOOK_EVENTS.includes(key as HookEvent)) {
+      warn(file, `hooks の未知のイベント: ${key}（${HOOK_EVENTS.join(" / ")}）`);
+      continue;
+    }
+    const list = source[key];
+    if (!Array.isArray(list)) {
+      warn(file, `hooks.${key} は配列である必要があります`);
+      continue;
+    }
+
+    const valid = [];
+    for (const entry of list) {
+      const hook = entry as Record<string, unknown>;
+      if (typeof hook?.command !== "string") {
+        warn(file, `hooks.${key} の要素に command がありません`);
+        continue;
+      }
+      if (hook.matcher !== undefined) {
+        if (typeof hook.matcher !== "string") {
+          warn(file, `hooks.${key} の matcher は文字列である必要があります`);
+          continue;
+        }
+        // 書式が通らない matcher は1つも当たらないまま無視されるので、読んだ時点で言う
+        try {
+          parseRule(hook.matcher);
+        } catch (error) {
+          warn(file, (error as Error).message);
+          continue;
+        }
+      }
+      if (hook.timeout !== undefined && typeof hook.timeout !== "number") {
+        warn(file, `hooks.${key} の timeout は number である必要があります`);
+        continue;
+      }
+      valid.push({
+        matcher: hook.matcher as string | undefined,
+        command: hook.command,
+        timeout: hook.timeout as number | undefined,
+      });
+    }
+    set[key as HookEvent] = valid;
+  }
+
+  return set;
+}
+
 function readSettings(file: string): Settings | undefined {
   let text: string;
   try {
@@ -128,6 +192,10 @@ function readSettings(file: string): Settings | undefined {
       settings.permissions = readPermissions(file, value);
       continue;
     }
+    if (kind === "hooks") {
+      settings.hooks = readHooks(file, value);
+      continue;
+    }
     if (typeof value !== kind) {
       warn(file, `${key} は ${kind} である必要があります`);
       continue;
@@ -136,6 +204,16 @@ function readSettings(file: string): Settings | undefined {
   }
 
   return settings;
+}
+
+/** フックも層をまたいで全部走らせる。上の層で下のフックを消せないようにする */
+export function mergeHooks(...sets: (HookSet | undefined)[]): HookSet {
+  const merged: HookSet = {};
+  for (const event of HOOK_EVENTS) {
+    const list = sets.flatMap((set) => set?.[event] ?? []);
+    if (list.length > 0) merged[event] = list;
+  }
+  return merged;
 }
 
 /** allow / ask / deny はどの層のものも全部効かせる。deny は1つでも当たれば止まる */
@@ -150,10 +228,14 @@ export function mergePermissions(
   return merged;
 }
 
+/** user は本人の設定。project と local は、そのディレクトリから来たもの */
+export type Layer = "user" | "project" | "local";
+
 export type RuleSource = {
   action: (typeof LISTS)[number];
   rule: string;
   source: string;
+  layer: Layer;
 };
 
 export type Loaded = {
@@ -164,6 +246,15 @@ export type Loaded = {
   sources: Partial<Record<keyof Settings, string>>;
   /** ルールは層をまたいで連結するので、1本ずつ出所を持つ */
   rules: RuleSource[];
+  /** フックも同じ。どのファイルが刺したコマンドかを追えるようにする */
+  hooks: HookSource[];
+};
+
+export type HookSource = {
+  event: HookEvent;
+  hook: HookConfig;
+  source: string;
+  layer: Layer;
 };
 
 /**
@@ -175,8 +266,15 @@ export function loadSettings(): Loaded {
   const layers: Settings[] = [];
   const sources: Partial<Record<keyof Settings, string>> = {};
   const rules: RuleSource[] = [];
+  const hooks: HookSource[] = [];
 
-  for (const file of [USER, PROJECT, LOCAL]) {
+  const layers_: [string, Layer][] = [
+    [USER, "user"],
+    [PROJECT, "project"],
+    [LOCAL, "local"],
+  ];
+
+  for (const [file, layer] of layers_) {
     const settings = readSettings(file);
     if (!settings) continue;
 
@@ -189,7 +287,12 @@ export function loadSettings(): Loaded {
     }
     for (const action of LISTS) {
       for (const rule of settings.permissions?.[action] ?? []) {
-        rules.push({ action, rule, source: name });
+        rules.push({ action, rule, source: name, layer });
+      }
+    }
+    for (const event of HOOK_EVENTS) {
+      for (const hook of settings.hooks?.[event] ?? []) {
+        hooks.push({ event, hook, source: name, layer });
       }
     }
   }
@@ -198,10 +301,12 @@ export function loadSettings(): Loaded {
     settings: {
       ...Object.assign({}, ...layers),
       permissions: mergePermissions(...layers.map((l) => l.permissions)),
+      hooks: mergeHooks(...layers.map((l) => l.hooks)),
     },
     files,
     sources,
     rules,
+    hooks,
   };
 }
 

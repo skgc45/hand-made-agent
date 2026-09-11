@@ -1,12 +1,22 @@
 import OpenAI from "openai";
-import { type RuleSource, type Settings, loadSettings } from "./settings/index.js";
+import { HOOK_EVENTS, type HookSet } from "./hooks/index.js";
+import type { PermissionSet } from "./permission/index.js";
+import {
+  type HookSource,
+  type RuleSource,
+  type Settings,
+  loadSettings,
+} from "./settings/index.js";
+import { fingerprint, isTrusted, trustSubject } from "./settings/trust.js";
 
-const { settings, files, sources, rules } = loadSettings();
+const { settings, files, sources, rules, hooks } = loadSettings();
 
 /** 実際に読めた設定ファイル。起動時のバナーに出す */
 export const SETTINGS_FILES = files;
 /** 設定ファイル由来の権限ルール（出所つき）。hma config が出す */
 export const SETTINGS_RULES: RuleSource[] = rules;
+/** 同じくフック。どのファイルが刺したコマンドか */
+export const SETTINGS_HOOKS: HookSource[] = hooks;
 
 export const BASE_URL =
   process.env.LLM_BASE_URL ??
@@ -42,8 +52,37 @@ export const STORE_PATH =
   process.env.STORE_PATH ??
   settings.storePath ??
   (STORE === "sqlite" ? ".threads/agent.db" : ".threads");
-/** 設定ファイル由来の権限ルール。プロファイルの既定とマージして使う */
-export const PERMISSIONS = settings.permissions ?? {};
+/**
+ * .hma の中身のうち「緩める方向」のものだけ、初回に本人の確認を取る。
+ * clone しただけのリポジトリのフックが、黙って自分の権限で走らないようにする
+ */
+export const TRUST_SUBJECT = trustSubject(hooks, rules);
+export const TRUST_PRINT = fingerprint(TRUST_SUBJECT);
+export const NEEDS_TRUST =
+  (TRUST_SUBJECT.hooks.length > 0 || TRUST_SUBJECT.rules.length > 0) &&
+  !isTrusted(TRUST_PRINT);
+
+/** 信頼していないときは、締める方向（deny / ask）だけ残す */
+export function permissionsFor(trusted: boolean): PermissionSet {
+  const set: PermissionSet = {};
+  for (const { action, rule, layer } of rules) {
+    if (!trusted && layer !== "user" && action === "allow") continue;
+    (set[action] ??= []).push(rule);
+  }
+  return set;
+}
+
+/** 信頼していないときは、本人の ~/.hma のフックだけ走らせる */
+export function hooksFor(trusted: boolean): HookSet {
+  const set: HookSet = {};
+  for (const event of HOOK_EVENTS) {
+    const list = hooks
+      .filter((h) => h.event === event && (trusted || h.layer === "user"))
+      .map((h) => h.hook);
+    if (list.length > 0) set[event] = list;
+  }
+  return set;
+}
 
 export type ConfigRow = { name: string; value: string; source: string };
 

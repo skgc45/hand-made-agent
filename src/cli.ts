@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
+import * as readline from "node:readline/promises";
 import { parseArgs } from "node:util";
 import {
   CONTEXT_LIMIT,
   MODEL,
+  NEEDS_TRUST,
+  SETTINGS_HOOKS,
   SETTINGS_RULES,
+  TRUST_PRINT,
+  TRUST_SUBJECT,
   PROFILE,
   SETTINGS_FILES,
   STORE,
@@ -15,6 +20,7 @@ import {
   describeConfig,
 } from "./config.js";
 import { createHooks } from "./harness/index.js";
+import { describeTrust, recordTrust } from "./settings/trust.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
 import { createStore } from "./store/index.js";
@@ -30,8 +36,47 @@ const { values: opts } = parseArgs({
     profile: { type: "string" },
     workspace: { type: "string" },
     config: { type: "boolean" },
+    trust: { type: "boolean" },
   },
 });
+
+/** .hma には任意のコマンドが書ける。走らせる前に、何が走るのかを見せて聞く */
+async function askTrust(): Promise<boolean> {
+  console.log(
+    "\n\x1b[33mこのディレクトリの .hma に、あなたの権限で動くものが入っています:\x1b[0m",
+  );
+  for (const line of describeTrust(TRUST_SUBJECT)) console.log(line);
+  console.log(
+    "\n\x1b[2m実行はあなた自身の権限で、承認を通らずに行われます（環境変数も見えます）。\x1b[0m",
+  );
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  const answer = await rl.question("\x1b[33m信頼しますか? [y]es / [n]o: \x1b[0m");
+  rl.close();
+
+  if (answer.trim().toLowerCase() !== "y") {
+    console.log("\x1b[2m  信頼しませんでした。フックと allow は無効のまま進みます。\x1b[0m\n");
+    return false;
+  }
+  await recordTrust(TRUST_PRINT);
+  console.log("\x1b[2m  信頼しました（~/.hma/trust.json に記録）。\x1b[0m\n");
+  return true;
+}
+
+if (opts.trust) {
+  if (TRUST_SUBJECT.hooks.length === 0 && TRUST_SUBJECT.rules.length === 0) {
+    console.log("このディレクトリの .hma に、確認が要るものはありません。");
+  } else if (!NEEDS_TRUST) {
+    console.log("信頼済みです:");
+    for (const line of describeTrust(TRUST_SUBJECT)) console.log(line);
+  } else {
+    await askTrust();
+  }
+  process.exit(0);
+}
 
 if (opts.config) {
   if (SETTINGS_FILES.length > 0) {
@@ -69,6 +114,7 @@ if (opts.config) {
         action,
         rule,
         source: `プロファイル ${current.name}`,
+        layer: undefined,
       })),
     ),
     ...SETTINGS_RULES,
@@ -77,9 +123,25 @@ if (opts.config) {
   console.log("\n権限ルール（deny > allow > ask の順に見る。どれにも当たらなければ通す）:");
   if (rules.length === 0) console.log("  （なし）");
   const ruleWidth = Math.max(1, ...rules.map((r) => cells(r.rule)));
-  for (const { action, rule, source } of rules) {
+  for (const { action, rule, source, layer } of rules) {
+    const off =
+      NEEDS_TRUST && layer !== undefined && layer !== "user" && action === "allow";
     console.log(
-      `  ${pad(action, 5)}  ${pad(rule, ruleWidth)}  \x1b[2m${source}\x1b[0m`,
+      `  ${pad(action, 5)}  ${pad(rule, ruleWidth)}  \x1b[2m${source}${off ? " — 未信頼のため無効" : ""}\x1b[0m`,
+    );
+  }
+
+  console.log("\nフック（設定ファイルから刺した外部コマンド）:");
+  if (SETTINGS_HOOKS.length === 0) console.log("  （なし）");
+  const eventWidth = Math.max(1, ...SETTINGS_HOOKS.map((h) => cells(h.event)));
+  const matcherWidth = Math.max(
+    1,
+    ...SETTINGS_HOOKS.map((h) => cells(h.hook.matcher ?? "*")),
+  );
+  for (const { event, hook, source, layer } of SETTINGS_HOOKS) {
+    const off = NEEDS_TRUST && layer !== "user";
+    console.log(
+      `  ${pad(event, eventWidth)}  ${pad(hook.matcher ?? "*", matcherWidth)}  ${hook.command}  \x1b[2m${source}${off ? " — 未信頼のため無効（hma trust）" : ""}\x1b[0m`,
     );
   }
   process.exit(0);
@@ -104,6 +166,8 @@ if (opts.list) {
 
 const threadId = opts.new ? randomUUID() : (opts.thread ?? "cli");
 
+const trusted = NEEDS_TRUST ? await askTrust() : true;
+
 const transport = new StdioTransport(threadId);
 const sessions = new Sessions({
   client: createClient(),
@@ -112,7 +176,7 @@ const sessions = new Sessions({
   contextLimit: CONTEXT_LIMIT,
   trim: TRIM,
   stream: STREAM,
-  ...createHooks({ profile, ask: transport.approve }),
+  ...createHooks({ profile, ask: transport.approve, trusted }),
   store,
   telemetry: createTelemetry(),
 });

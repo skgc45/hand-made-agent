@@ -12,6 +12,7 @@ const USAGE = `hma — 手書きエージェント
   hma serve           HTTP + SSE で起動
   hma list            保存されているスレッド一覧
   hma config          いま効いている設定と権限ルール（どこから来たかつき）
+  hma trust           .hma のフックと allow を確認して信頼する
 
 CLI のオプション: --thread <id> / --new / --profile <name> / --workspace <path>
 `;
@@ -38,6 +39,9 @@ switch (sub) {
     break;
   case "config":
     args = ["--config", ...rest];
+    break;
+  case "trust":
+    args = ["--trust", ...rest];
     break;
   case "help":
   case "--help":

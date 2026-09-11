@@ -55,6 +55,8 @@ export type ToolCallContext = {
  * suspend は pi に無い。AG-UI の Interrupt に載せて run を中断するために足した。
  */
 export type BeforeToolCallResult =
+  /** 後ろのフックに聞かずに実行する。承認を飛ばしたいフックが使う */
+  | { kind: "allow" }
   | { kind: "block"; reason: string; terminate?: boolean }
   | {
       kind: "suspend";
@@ -83,6 +85,15 @@ export type AfterToolCall = (
   signal?: AbortSignal,
 ) => Promise<AfterToolCallResult>;
 
+/** 入力を履歴に積む前の穴。止めるか、文脈を足すか、何もしないか */
+export type BeforeUserMessageResult =
+  { blocked?: string; context?: string } | undefined;
+
+export type BeforeUserMessage = (
+  text: string,
+  signal?: AbortSignal,
+) => Promise<BeforeUserMessageResult>;
+
 export type AgentConfig = {
   client: OpenAI;
   model: string;
@@ -95,6 +106,8 @@ export type AgentConfig = {
   beforeToolCall?: BeforeToolCall;
   /** ツール結果の書き換えと terminate の申告 */
   afterToolCall?: AfterToolCall;
+  /** ユーザー入力を積む前に呼ばれる */
+  beforeUserMessage?: BeforeUserMessage;
   /** 状態が変わるたびに呼ばれる。どこに書くかは Agent の関心事ではない */
   append?: AppendFn;
   /** false にすると応答が出揃ってから1回で流す（ステップ7 以前の挙動） */
@@ -269,7 +282,27 @@ export class Agent {
         if (outcome.suspended) return;
         stopped = outcome.terminate;
       } else {
+        const decision = await this.config.beforeUserMessage?.(
+          userInput,
+          signal,
+        );
+        if (decision?.blocked) {
+          yield {
+            type: EventType.CUSTOM,
+            name: "hook",
+            value: { event: "UserPromptSubmit", reason: decision.blocked },
+          };
+          yield {
+            type: EventType.RUN_FINISHED,
+            threadId: this.threadId,
+            runId,
+          };
+          return;
+        }
         await this.pushMessage({ role: "user", content: userInput });
+        if (decision?.context) {
+          await this.pushMessage({ role: "user", content: decision.context });
+        }
       }
 
       let step = 0;
