@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import {
-  APPROVAL,
   CONTEXT_LIMIT,
   MODEL,
   PROFILE,
@@ -12,7 +11,7 @@ import {
   TRIM,
   createClient,
 } from "./config.js";
-import { approvalHook } from "./approval.js";
+import { createHooks } from "./harness/index.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
 import { createStore } from "./store/index.js";
@@ -57,10 +56,7 @@ const sessions = new Sessions({
   contextLimit: CONTEXT_LIMIT,
   trim: TRIM,
   stream: STREAM,
-  beforeToolCall: approvalHook(
-    profile.requiresApproval,
-    APPROVAL === "auto" ? async () => true : transport.approve,
-  ),
+  ...createHooks({ profile, ask: transport.approve }),
   store,
   telemetry: createTelemetry(),
 });

@@ -217,6 +217,9 @@ src/agent/loop.ts      Agent クラス。AG-UI イベントを yield する asyn
 src/agent/stream.ts    ストリーミングの delta を1つのメッセージに畳む
 src/agent/tools.ts     createFileTools(workspace) — ファイル操作ツール一式
 src/agent/toolset.ts   interface Toolset（loop.ts が知る唯一のツールの姿）
+src/agent/hooks.ts     composeBefore / composeAfter — フックを1本に束ねる
+src/harness/index.ts   createHooks() — ツール実行に挿すものを組み立てる
+src/approval.ts        承認ゲートを beforeToolCall フックとして組み立てる
 src/profile/index.ts   Profile 型と createProfile()
 src/profile/sandbox.ts   sandbox を眺めるアシスタント
 src/profile/coding.ts    コーディングエージェント
