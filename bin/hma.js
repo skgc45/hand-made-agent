@@ -11,6 +11,7 @@ const USAGE = `hma — 手書きエージェント
   hma code [path]     コーディングエージェント。path 省略時は現在のディレクトリ
   hma serve           HTTP + SSE で起動
   hma list            保存されているスレッド一覧
+  hma config          いま効いている設定と権限ルール（どこから来たかつき）
 
 CLI のオプション: --thread <id> / --new / --profile <name> / --workspace <path>
 `;
@@ -34,6 +35,9 @@ switch (sub) {
   }
   case "list":
     args = ["--list", ...rest];
+    break;
+  case "config":
+    args = ["--config", ...rest];
     break;
   case "help":
   case "--help":

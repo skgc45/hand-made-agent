@@ -34,6 +34,7 @@ hma code            # コーディングエージェント。作業対象は現�
 hma code path/to/x  # 作業対象を指定
 hma serve           # HTTP + SSE（自前フロント: http://localhost:3000）
 hma list            # 保存されているスレッド一覧
+hma config          # いま効いている設定と権限ルール（どこから来たかつき）
 hma --thread foo    # スレッドを指定（--new で新規）
 ```
 
@@ -189,7 +190,8 @@ CLI とサーバーは同じ `.threads/agent.db` を見るので、`hma list` �
 - [x] 5. 進捗を UI に出したくなる（AG-UI）+ 承認を Interrupt に載せ替え
 - [x] 6. プロセスを再起動すると履歴が消える（永続化）
 - [x] 7. 承認がツール名でしか効かない（権限ルール）
-- [x] 8. 環境変数だけだと、決めたことを共有できない（設定ファイル）← いまここ
+- [x] 8. 環境変数だけだと、決めたことを共有できない（設定ファイル）
+- [x] 9. 効いている設定が分からなくなる（hma config）← いまここ
 
 各ステップは「素で書くと困る → だからフレームワークにその機能がある」を体感するのが目的。
 
@@ -938,7 +940,53 @@ gitignore してあるとはいえ、鍵をファイルに書く習慣を作ら�
 
 - **CLI フラグ**は `--profile` / `--workspace` だけ（`flags > env > files`）
 - **再読み込み**。起動時に1回だけ読む
-- **`hma config`** のような、いまの実効値を見るコマンド
+
+## ステップ9 で理解すること — 効いている設定が分からなくなる
+
+ステップ8 で層が3つになり、その上に環境変数と CLI フラグが乗った。**値の出所が5通り**
+ある。起動時のバナーは「どのファイルを読んだか」までしか言わない。
+
+```
+$ hma config
+設定ファイル: ~/.hma/settings.json < .hma/settings.json < .hma/settings.local.json
+
+  LLM_MODEL       user-model                                                ~/.hma/settings.json
+  LLM_BASE_URL    https://generativelanguage.googleapis.com/v1beta/openai/  既定
+  GEMINI_API_KEY  （設定済み）                                              環境変数
+  PROFILE         coding                                                    フラグ
+  WORKSPACE       work                                                      .hma/settings.json
+  TRIM            compact                                                   環境変数 TRIM
+  STORE           file                                                      ~/.hma/settings.json
+  STORE_PATH      .threads                                                  既定
+  …
+
+権限ルール（deny > allow > ask の順に見る。どれにも当たらなければ通す）:
+  deny   bash(curl:*)  ~/.hma/settings.json
+  deny   bash(rm:*)    .hma/settings.json
+  allow  bash(ls:*)    .hma/settings.json
+  allow  bash(cat:*)   .hma/settings.local.json
+  ask    bash          プロファイル sandbox
+```
+
+### 出所を持つのは設定側、優先順位を知っているのは config.ts
+
+`loadSettings()` は**スカラーごとに「最後に値を置いた層」**を覚える。ルールは層をまたいで
+連結するので、こちらは**1本ずつ出所を持つ**（マージの仕方が違うので、記録の仕方も違う）。
+
+その上に環境変数とフラグを重ねているのは `config.ts` なので、説明する関数も `config.ts`
+に置いた。`describeConfig()` がやっているのは**優先順位をもう一度なぞること**だけで、
+値そのものは既に決まっている定数を読んでいる。**決める場所と説明する場所が離れると、
+説明のほうが嘘になる。**
+
+### 鍵は値を出さない
+
+`GEMINI_API_KEY` だけは `（設定済み）` / `（未設定）` にした。設定を人に見せるための
+コマンドが、そのまま鍵の表示装置になっては困る。
+
+### これは次のステップの道具でもある
+
+ステップ10 でフックを設定ファイルから刺せるようにすると、「なぜこのコマンドが走ったのか」
+が設定ファイルを読まないと分からなくなる。`hma config` はその答え合わせに使う。
 
 ## AG-UI はどこに位置するのか — エージェント関連プロトコルの地図
 

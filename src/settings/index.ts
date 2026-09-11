@@ -150,10 +150,20 @@ export function mergePermissions(
   return merged;
 }
 
+export type RuleSource = {
+  action: (typeof LISTS)[number];
+  rule: string;
+  source: string;
+};
+
 export type Loaded = {
   settings: Settings;
   /** 実在して読めたファイル。どこから来た設定か分からなくなるので起動時に出す */
   files: string[];
+  /** スカラーごとに、最後に値を置いた層 */
+  sources: Partial<Record<keyof Settings, string>>;
+  /** ルールは層をまたいで連結するので、1本ずつ出所を持つ */
+  rules: RuleSource[];
 };
 
 /**
@@ -163,12 +173,25 @@ export type Loaded = {
 export function loadSettings(): Loaded {
   const files: string[] = [];
   const layers: Settings[] = [];
+  const sources: Partial<Record<keyof Settings, string>> = {};
+  const rules: RuleSource[] = [];
 
   for (const file of [USER, PROJECT, LOCAL]) {
     const settings = readSettings(file);
     if (!settings) continue;
-    files.push(display(file));
+
+    const name = display(file);
+    files.push(name);
     layers.push(settings);
+
+    for (const key of Object.keys(settings) as (keyof Settings)[]) {
+      if (key !== "permissions") sources[key] = name;
+    }
+    for (const action of LISTS) {
+      for (const rule of settings.permissions?.[action] ?? []) {
+        rules.push({ action, rule, source: name });
+      }
+    }
   }
 
   return {
@@ -177,6 +200,8 @@ export function loadSettings(): Loaded {
       permissions: mergePermissions(...layers.map((l) => l.permissions)),
     },
     files,
+    sources,
+    rules,
   };
 }
 

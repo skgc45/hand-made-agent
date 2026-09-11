@@ -1,10 +1,12 @@
 import OpenAI from "openai";
-import { loadSettings } from "./settings/index.js";
+import { type RuleSource, type Settings, loadSettings } from "./settings/index.js";
 
-const { settings, files } = loadSettings();
+const { settings, files, sources, rules } = loadSettings();
 
 /** 実際に読めた設定ファイル。起動時のバナーに出す */
 export const SETTINGS_FILES = files;
+/** 設定ファイル由来の権限ルール（出所つき）。hma config が出す */
+export const SETTINGS_RULES: RuleSource[] = rules;
 
 export const BASE_URL =
   process.env.LLM_BASE_URL ??
@@ -42,6 +44,56 @@ export const STORE_PATH =
   (STORE === "sqlite" ? ".threads/agent.db" : ".threads");
 /** 設定ファイル由来の権限ルール。プロファイルの既定とマージして使う */
 export const PERMISSIONS = settings.permissions ?? {};
+
+export type ConfigRow = { name: string; value: string; source: string };
+
+/** 実効値がどこから来たかを、優先順位（フラグ > 環境変数 > ファイル > 既定）のまま説明する */
+export function describeConfig(overrides: {
+  workspace?: string;
+  profile?: string;
+} = {}): ConfigRow[] {
+  const from = (env: string, key: keyof Settings): string =>
+    process.env[env] !== undefined
+      ? `環境変数 ${env}`
+      : (sources[key] ?? "既定");
+
+  const row = (
+    name: string,
+    key: keyof Settings,
+    value: unknown,
+    override?: string,
+  ): ConfigRow => ({
+    name,
+    value: String(value),
+    source: override !== undefined ? "フラグ" : from(name, key),
+  });
+
+  return [
+    row("LLM_MODEL", "model", MODEL),
+    row("LLM_BASE_URL", "baseUrl", BASE_URL),
+    {
+      name: "GEMINI_API_KEY",
+      value: API_KEY ? "（設定済み）" : "（未設定）",
+      source: API_KEY ? "環境変数" : "既定",
+    },
+    row("PROFILE", "profile", overrides.profile ?? PROFILE, overrides.profile),
+    row(
+      "WORKSPACE",
+      "workspace",
+      overrides.workspace ?? WORKSPACE,
+      overrides.workspace,
+    ),
+    row("APPROVAL", "approval", APPROVAL),
+    row("TRIM", "trim", TRIM),
+    row("CONTEXT_LIMIT", "contextLimit", CONTEXT_LIMIT),
+    row("STREAM", "stream", STREAM),
+    row("PORT", "port", PORT),
+    row("STORE", "store", STORE),
+    row("STORE_PATH", "storePath", STORE_PATH),
+    row("TELEMETRY", "telemetry", TELEMETRY),
+    row("TELEMETRY_URL", "telemetryUrl", TELEMETRY_URL),
+  ];
+}
 
 export function createClient(): OpenAI {
   if (!API_KEY) {
