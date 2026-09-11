@@ -14,8 +14,11 @@ export type Profile = {
   toolset: Toolset;
   /** 既定の権限ルール。deny > allow > ask の順に見て、どれにも当たらなければ通す */
   permissions: PermissionSet;
-  /** 読むだけのツール。plan モードはこれ以外を止める */
-  readOnly: string[];
+  /**
+   * ツールの種類。read は副作用が無いもの。
+   * plan は read 以外を止め、acceptEdits は edit を通す
+   */
+  kinds: Record<string, "read" | "edit" | "execute">;
 };
 
 const builders: Record<string, (workspace: string) => Profile> = {

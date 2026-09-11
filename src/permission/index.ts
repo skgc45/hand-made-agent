@@ -26,8 +26,8 @@ export type Permissions = {
 /** コマンド置換は中身を別に評価しないと素通りするので、allow には一致させない */
 const INJECTION = /\$\(|`/;
 
-/** plan は ask と同じ判定。止める範囲は deny ルールに展開して渡される */
-const MODES = ["ask", "auto", "plan"];
+/** plan と acceptEdits は ask と同じ判定。効く範囲はルールに展開して渡される */
+const MODES = ["ask", "auto", "plan", "acceptEdits"];
 
 export function createPermissions(
   set: PermissionSet,

@@ -11,6 +11,7 @@ import type { Profile } from "../profile/index.js";
 import { mergePermissions, saveAllowRule } from "../settings/index.js";
 import { retrust } from "../settings/trust.js";
 import { type AskFn, approvalHook } from "./approval.js";
+import { readBeforeEdit, truncateResult } from "./files.js";
 import { onStop, postToolUse, preToolUse, userPromptSubmit } from "./external.js";
 
 export type HarnessOptions = {
@@ -29,15 +30,27 @@ export type Hooks = {
   onStop?: () => Promise<string[]>;
 };
 
-/**
- * plan は「読むだけ」。専用の判定を足さず、読まないツールを deny に展開して渡す。
- * どのツールが読むだけかを知っているのはプロファイルだけ
- */
-export function planDenies(profile: Profile): PermissionSet {
-  const all = profile.toolset.tools
+function toolNames(profile: Profile): string[] {
+  return profile.toolset.tools
     .filter((tool) => tool.type === "function")
     .map((tool) => tool.function.name);
-  return { deny: all.filter((name) => !profile.readOnly.includes(name)) };
+}
+
+/**
+ * モードは専用の判定を足さず、ルールに展開して渡す。
+ * どのツールが何をするかを知っているのはプロファイルだけ
+ */
+export function modeRules(profile: Profile, mode: string): PermissionSet {
+  const names = toolNames(profile);
+
+  // 種類の分からないツールは read 扱いしない。増えたときに止まる側へ倒す
+  if (mode === "plan") {
+    return { deny: names.filter((name) => profile.kinds[name] !== "read") };
+  }
+  if (mode === "acceptEdits") {
+    return { allow: names.filter((name) => profile.kinds[name] === "edit") };
+  }
+  return {};
 }
 
 /** ツール実行に挿すものを1箇所で束ねる。増えていくのはこの配列 */
@@ -46,11 +59,12 @@ export function createHooks({ profile, ask, trusted }: HarnessOptions): Hooks {
     mergePermissions(
       profile.permissions,
       permissionsFor(trusted),
-      APPROVAL === "plan" ? planDenies(profile) : undefined,
+      modeRules(profile, APPROVAL),
     ),
     APPROVAL,
   );
   const hooks = hooksFor(trusted);
+  const files = readBeforeEdit(profile.workspace);
 
   // 本人が [s]ave したぶんで指紋が変わる。信頼している間だけ追随させる
   const save = trusted
@@ -65,9 +79,16 @@ export function createHooks({ profile, ask, trusted }: HarnessOptions): Hooks {
     // 外部フックが先。block も allow もフックの言い分が権限ルールより強い
     beforeToolCall: composeBefore([
       preToolUse(hooks.PreToolUse ?? []),
+      // 承認より先に見る。読んでいないファイルは、許可しても書かせない
+      files.before,
       approvalHook(permissions, ask, save),
     ]),
-    afterToolCall: composeAfter([postToolUse(hooks.PostToolUse ?? [])]),
+    // 切ってからフックに渡す。モデルが見るものとフックが見るものを揃える
+    afterToolCall: composeAfter([
+      files.after,
+      truncateResult(),
+      postToolUse(hooks.PostToolUse ?? []),
+    ]),
     beforeUserMessage: userPromptSubmit(hooks.UserPromptSubmit ?? []),
     onStop: onStop(hooks.Stop ?? []),
   };

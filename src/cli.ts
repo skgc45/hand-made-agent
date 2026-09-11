@@ -22,7 +22,7 @@ import {
   hooksFor,
 } from "./config.js";
 import { collectContext } from "./context/index.js";
-import { createHooks, planDenies } from "./harness/index.js";
+import { createHooks, modeRules } from "./harness/index.js";
 import { describeTrust, recordTrust } from "./settings/trust.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
@@ -121,14 +121,14 @@ if (opts.config) {
       })),
     ),
     ...SETTINGS_RULES,
-    ...(APPROVAL === "plan"
-      ? (planDenies(current).deny ?? []).map((rule) => ({
-          action: "deny" as const,
-          rule,
-          source: "plan モード",
-          layer: undefined,
-        }))
-      : []),
+    ...(["deny", "allow", "ask"] as const).flatMap((action) =>
+      (modeRules(current, APPROVAL)[action] ?? []).map((rule) => ({
+        action,
+        rule,
+        source: `${APPROVAL} モード`,
+        layer: undefined,
+      })),
+    ),
   ].sort((a, b) => ORDER.indexOf(a.action) - ORDER.indexOf(b.action));
 
   console.log("\n権限ルール（deny > allow > ask の順に見る。どれにも当たらなければ通す）:");

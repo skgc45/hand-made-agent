@@ -102,6 +102,67 @@ export function createFileTools(workspace: string): Toolset {
     {
       type: "function",
       function: {
+        name: "glob",
+        description: `${WORKSPACE} 内のファイルをパターンで探す。名前が分かっているときはこちら。`,
+        parameters: {
+          type: "object",
+          properties: {
+            pattern: {
+              type: "string",
+              description: `**/*.ts のようなパターン。${WORKSPACE} からの相対`,
+            },
+          },
+          required: ["pattern"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "grep",
+        description: `${WORKSPACE} 内のファイルの中身を正規表現で探し、一致した行を返す。`,
+        parameters: {
+          type: "object",
+          properties: {
+            pattern: { type: "string", description: "正規表現" },
+            glob: {
+              type: "string",
+              description: "探す範囲。省略すると全ファイル（既定 **/*）",
+            },
+          },
+          required: ["pattern"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "todo_write",
+        description:
+          "これからやることの一覧を記録して、いまの状態を返す。手順が3つ以上あるときに使う。",
+        parameters: {
+          type: "object",
+          properties: {
+            items: {
+              type: "array",
+              description: "やることの一覧。毎回すべて渡す（差分ではない）",
+              items: {
+                type: "object",
+                properties: {
+                  text: { type: "string" },
+                  done: { type: "boolean" },
+                },
+                required: ["text"],
+              },
+            },
+          },
+          required: ["items"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "bash",
         description: `シェルコマンドを実行して標準出力・標準エラー・終了コードを返す。カレントディレクトリは ${WORKSPACE}。`,
         parameters: {
@@ -115,10 +176,89 @@ export function createFileTools(workspace: string): Toolset {
     },
   ];
 
+  /** 探索が際限なく返らないようにする。上限に当たったことは結果に書く */
+  const MAX_HITS = 200;
+
+  async function* walk(pattern: string): AsyncGenerator<string> {
+    // glob は ROOT の外に出られない。パターンに .. が入っていても cwd で閉じる
+    for await (const entry of fs.glob(pattern, { cwd: ROOT })) {
+      const rel = typeof entry === "string" ? entry : String(entry);
+      const abs = path.resolve(ROOT, rel);
+      if (abs !== ROOT && !abs.startsWith(ROOT + path.sep)) continue;
+      yield rel;
+    }
+  }
+
   const handlers: Record<
     string,
     (input: any, signal?: AbortSignal) => Promise<string>
   > = {
+    async glob({ pattern }) {
+      const found: string[] = [];
+      for await (const rel of walk(pattern)) {
+        found.push(rel);
+        if (found.length >= MAX_HITS) break;
+      }
+      if (found.length === 0) return "(一致なし)";
+      found.sort();
+      return found.length >= MAX_HITS
+        ? `${found.join("\n")}\n（${MAX_HITS} 件で打ち切り。パターンを絞ってください）`
+        : found.join("\n");
+    },
+
+    async grep({ pattern, glob = "**/*" }) {
+      let regexp: RegExp;
+      try {
+        regexp = new RegExp(pattern);
+      } catch (error) {
+        return `エラー: 正規表現として読めません: ${(error as Error).message}`;
+      }
+
+      const hits: string[] = [];
+      for await (const rel of walk(glob)) {
+        const abs = path.resolve(ROOT, rel);
+        let stat;
+        try {
+          stat = await fs.stat(abs);
+        } catch {
+          continue;
+        }
+        if (!stat.isFile()) continue;
+
+        let text: string;
+        try {
+          text = await fs.readFile(abs, "utf-8");
+        } catch {
+          continue;
+        }
+        // バイナリを行として吐くと履歴が壊れる
+        if (text.includes("\u0000")) continue;
+
+        const lines = text.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          if (!regexp.test(lines[i])) continue;
+          hits.push(`${rel}:${i + 1}: ${lines[i].trim().slice(0, 200)}`);
+          if (hits.length >= MAX_HITS) break;
+        }
+        if (hits.length >= MAX_HITS) break;
+      }
+
+      if (hits.length === 0) return "(一致なし)";
+      return hits.length >= MAX_HITS
+        ? `${hits.join("\n")}\n（${MAX_HITS} 件で打ち切り。パターンを絞ってください）`
+        : hits.join("\n");
+    },
+
+    async todo_write({ items }) {
+      const list: { text: string; done?: boolean }[] = Array.isArray(items)
+        ? items
+        : [];
+      if (list.length === 0) return "(空)";
+      return list
+        .map((item) => `${item.done ? "[x]" : "[ ]"} ${item.text}`)
+        .join("\n");
+    },
+
     async list_files({ path: rel = "." }) {
       const entries = await fs.readdir(resolveInRoot(rel), {
         withFileTypes: true,

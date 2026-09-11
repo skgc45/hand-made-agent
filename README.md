@@ -63,7 +63,7 @@ npm run typecheck
 | `LLM_BASE_URL` | Gemini の OpenAI 互換 | Ollama / Groq に差し替え可能 |
 | `CONTEXT_LIMIT` | `0`（無効） | トリム発動のトークン閾値。実験では `1200` |
 | `TRIM` | `none` | `none` / `naive` / `safe` / `compact` / `graph` |
-| `APPROVAL` | `ask` | `auto` で承認を省く / `plan` で読み取りだけにする |
+| `APPROVAL` | `ask` | `auto` / `acceptEdits`（編集は通す） / `plan`（読み取りだけ） |
 | `WORKSPACE` | `sandbox` | エージェントが触れる唯一の場所 |
 | `PROFILE` | `sandbox` | `sandbox` / `coding` |
 | `STREAM` | 有効 | `0` で応答が出揃ってから1回で流す |
@@ -194,7 +194,8 @@ CLI とサーバーは同じ `.threads/agent.db` を見るので、`hma list` �
 - [x] 8. 環境変数だけだと、決めたことを共有できない（設定ファイル）
 - [x] 9. 効いている設定が分からなくなる（hma config）
 - [x] 10. フックを足すたびにコードを触ることになる（外部プロセス）
-- [x] 11. 毎回同じことを説明している（プロジェクト文脈・環境・plan）← いまここ
+- [x] 11. 毎回同じことを説明している（プロジェクト文脈・環境・plan）
+- [x] 12. 探索が全部 bash を通る / 読まずに書き換える（ツールの質）← いまここ
 
 各ステップは「素で書くと困る → だからフレームワークにその機能がある」を体感するのが目的。
 
@@ -245,6 +246,7 @@ src/agent/compose.ts   composeBefore / composeAfter — フックを1本に束�
 src/agent/prompt.ts    SystemPrompt — base + 名前付きの節。system の文字列連結はここだけ
 src/harness/index.ts   createHooks() — ツール実行に挿すものを組み立てる
 src/harness/external.ts  設定から刺したフックを、ループの穴の形に変換する
+src/harness/files.ts   read-before-edit ガードと、ツール結果の切り詰め
 src/hooks/index.ts     外部プロセスの起動と、終了コード・標準出力の解釈
 src/settings/trust.ts  .hma の「緩める方向」の中身に指紋を取り、本人の確認を覚える
 src/context/index.ts   起動時に集める文脈（環境 / AGENTS.md / SessionStart / plan）
@@ -1277,6 +1279,106 @@ system プロンプトに載る文脈:
 - **`AGENTS.md` の再読み込み。** 起動時に1回だけ。編集しても効くのは次回から
 - **節ごとのトリム。** `contextLimit` を超えたとき、削られるのは会話のほうで、
   文脈の節は最後まで残る。`AGENTS.md` が大きいと**その分だけ会話が短くなる**
+
+## ステップ12 で理解すること — ツールが粗いと、承認もコンテキストも巻き添えになる
+
+ツールが `list_files` / `read_file` / `write_file` / `edit_file` / `bash` の5つしかないと、
+**探索が全部 `bash` を通る**。`bash` は `ask` なので、探すたびに聞かれる。聞かれるのが
+嫌で `[a]lways` すると、今度は何でも通る。
+
+### `glob` と `grep` を足す
+
+副作用が無いので `ask` の対象にならない。これだけで承認の回数が変わる。
+
+同じ質問（「`composeBefore` を定義しているファイルと、使っているファイルを全部挙げて」）を
+`src/` を作業対象にして投げ、`glob` / `grep` を `deny` した場合と比べた。
+
+| | ツール呼び出し | 内訳 | 入力トークン |
+|---|---|---|---|
+| `glob` / `grep` あり | **1** | grep 1 | **2,023** |
+| 無し（`bash` に落ちる） | 20 | bash 3 / list_files 13 / read_file 2 | 32,983 |
+
+**承認を求める回数は 3 → 0、入力トークンは 16 分の1。** `list_files` を13回叩いて
+ディレクトリを1つずつ降りていたものが、`grep` 1回で終わる。
+
+ツールを足すのは「できることを増やす」ためだと思いがちだが、ここでの効果は
+**できることを減らさずに、聞く回数とトークンを減らす**ことだった。
+
+### 読んでいないファイルを書き換えさせない
+
+モデルは「たぶんこう書いてあるはず」で `edit_file` を投げる。`old_text` の一意性
+チェック（ステップ「コーディングエージェントにする」）はその後の話で、**そもそも中身を
+見ていない**のが先にある。
+
+`beforeToolCall` に1本足した。承認より**先**に見る。許可しても、読んでいなければ書かせない。
+
+```
+> read_file を使わずに、いきなり edit_file で memo.txt の alpha を ALPHA に変えて
+
+  ← memo.txt をまだ読んでいません。read_file で現在の中身を確認してから書き換えてください。
+  ← alpha\nBRAVO\ncharlie        ← モデルが read_file を呼び直した
+  ← memo.txt を編集しました（-1 +1 行）
+```
+
+**止めるだけでなく、次に何をすればいいかを結果として返す**と、モデルは自分で復帰する。
+
+読んだ時刻（mtime）も覚えていて、**読んだあとに外で変わっていたら**もう一度止める。
+自分で書いたぶんは「読んだこと」にする（でないと2回目の編集が通らない）。
+
+### 出力を切る
+
+`bash` の `maxBuffer` は 1MB で、それがそのまま履歴に入る。**自分でコンテキストを溢れ
+させて、自分で trim を誘発していた。** 300行 / 15000文字で切って、切ったことと残り行数を
+書く。
+
+切ってからフックに渡す。**モデルが見るものとフックが見るものを揃える**ため。
+
+### `readOnly` を `kinds` にした
+
+ステップ11 でプロファイルに `readOnly` を足したが、`acceptEdits` には「編集するツール」の
+ほうが要る。2つのリストを持つより、1つの表にした。
+
+```ts
+kinds: {
+  list_files: "read", read_file: "read", glob: "read", grep: "read",
+  todo_write: "read",                    // 副作用が無いという意味
+  write_file: "edit", edit_file: "edit",
+  bash: "execute",
+}
+```
+
+- `plan` → `read` 以外を `deny`
+- `acceptEdits` → `edit` を `allow`
+
+**種類の分からないツールは `read` 扱いしない。** ツールが増えたとき、止まる側に倒れる。
+
+### `acceptEdits` がここで意味を持つ
+
+ステップ7 で「いまのプロファイルは編集を聞いていないので `acceptEdits` は `ask` と
+同じ」と書いた。`coding` プロファイルの既定を変えて、**編集も聞く**ようにした。
+
+```
+$ APPROVAL=ask hma code
+  edit_file を実行しようとしています        ← 聞かれる
+  許可するルール [edit_file(memo.txt)]:
+
+$ APPROVAL=acceptEdits hma code
+  ← memo.txt を編集しました（-1 +1 行）     ← 聞かれない。bash は聞かれたまま
+```
+
+`sandbox` プロファイルは変えていない。ステップ1〜6 の説明が変わってしまうため。
+
+### `todo_write` は入れたが、出し先が無い
+
+手順が3つ以上あるときに一覧を記録させるツール。ただし**状態を表示する口が無い**。
+ツール結果として返るので履歴には残るが、UI に出すには AG-UI の `STATE_SNAPSHOT` が要る
+（未実装のまま残しているもの）。いまは**モデル自身の整理**にしかなっていない。
+
+### まだやっていないこと
+
+- **`read_file` の範囲指定。** 切られた続きを読む手段が `grep` と `bash` しかない
+- **`grep` は自前実装。** `.gitignore` を見ないので `node_modules` も舐める。
+  上限200件で止まるだけ
 
 ## AG-UI はどこに位置するのか — エージェント関連プロトコルの地図
 

@@ -8,7 +8,16 @@ export function sandbox(workspace: string): Profile {
     workspace,
     toolset: createFileTools(workspace),
     permissions: { ask: ["bash"] },
-    readOnly: ["list_files", "read_file"],
+    kinds: {
+      list_files: "read",
+      read_file: "read",
+      glob: "read",
+      grep: "read",
+      todo_write: "read",
+      write_file: "edit",
+      edit_file: "edit",
+      bash: "execute",
+    },
     system: `あなたはファイル操作ができるアシスタントです。
 作業対象は ${workspace} の中だけです。
 ユーザーには日本語で答えてください。
