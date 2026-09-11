@@ -242,6 +242,7 @@ src/agent/compact.ts   LLM に要約させる rolling compaction
 src/agent/graph.ts     事実を抽出して持つ bi-temporal なグラフ（TRIM=graph）
 
 src/session/index.ts   Sessions。Map<threadId, Agent> と store の読み書き
+src/session/queue.ts   steering / follow-up の待ち行列。transport が積み Agent が drain する
 src/store/index.ts     interface Store と createStore()
 src/store/sqlite.ts      node:sqlite（既定）
 src/store/file.ts        JSON ファイル

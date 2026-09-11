@@ -7,7 +7,7 @@ import {
   type BeforeToolCall,
 } from "../agent/loop.js";
 import type { Profile } from "../profile/index.js";
-import { MessageQueue } from "../queue.js";
+import { MessageQueue } from "./queue.js";
 import type { Store, ThreadSummary } from "../store/index.js";
 import { type Telemetry, toRow } from "../telemetry/index.js";
 
