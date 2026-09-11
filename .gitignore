@@ -5,4 +5,6 @@ sandbox/*
 !sandbox/practice/
 .env
 .threads/
+# 共有する .hma/settings.json だけ追跡する
+.hma/settings.local.json
 .playwright-mcp/

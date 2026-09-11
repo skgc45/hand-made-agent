@@ -15,7 +15,12 @@ export type ApprovalResult = {
   approved: boolean;
   /** 以降このルールに当たるものを聞かずに通す */
   rule?: string;
+  /** ルールを設定ファイルに残す。false ならプロセスが死ぬまで */
+  save?: boolean;
 };
+
+/** ルールを書き足して、書いたファイルを返す */
+export type SaveFn = (rule: string) => Promise<string>;
 
 export type AskFn = (request: ApprovalRequest) => Promise<ApprovalResult>;
 
@@ -27,12 +32,25 @@ function parseInput(args: string): unknown {
   }
 }
 
-function remember(permissions: Permissions, rule?: string): void {
-  if (!rule) return;
+async function remember(
+  permissions: Permissions,
+  result: { rule?: string; save?: boolean },
+  save?: SaveFn,
+): Promise<void> {
+  if (!result.rule) return;
+
   try {
-    permissions.allowForSession(rule);
+    permissions.allowForSession(result.rule);
   } catch (error) {
     console.error("ルールを追加できません:", (error as Error).message);
+    return;
+  }
+
+  if (!result.save || !save) return;
+  try {
+    console.log(`  ${await save(result.rule)} に保存しました`);
+  } catch (error) {
+    console.error("ルールを保存できません:", (error as Error).message);
   }
 }
 
@@ -43,15 +61,16 @@ function remember(permissions: Permissions, rule?: string): void {
 export function approvalHook(
   permissions: Permissions,
   ask?: AskFn,
+  save?: SaveFn,
 ): BeforeToolCall {
   return async ({ name, arguments: args, resume }) => {
     // 中断から戻ってきた。payload の読み方を知っているのはここだけ
     if (resume) {
       const payload = resume.payload as
-        | { approved?: boolean; rule?: string }
+        | { approved?: boolean; rule?: string; save?: boolean }
         | undefined;
       const approved = resume.status === "resolved" && payload?.approved === true;
-      if (approved) remember(permissions, payload?.rule);
+      if (approved && payload) await remember(permissions, payload, save);
       return approved ? undefined : { kind: "block", reason: DENIED };
     }
 
@@ -64,7 +83,7 @@ export function approvalHook(
 
     if (ask) {
       const result = await ask({ name, arguments: args, suggestedRule });
-      if (result.approved) remember(permissions, result.rule);
+      if (result.approved) await remember(permissions, result, save);
       return result.approved ? undefined : { kind: "block", reason: DENIED };
     }
 
@@ -79,6 +98,7 @@ export function approvalHook(
           properties: {
             approved: { type: "boolean" },
             rule: { type: "string" },
+            save: { type: "boolean" },
           },
           required: ["approved"],
         },

@@ -4,6 +4,7 @@ import {
   CONTEXT_LIMIT,
   MODEL,
   PROFILE,
+  SETTINGS_FILES,
   STORE,
   STORE_PATH,
   STREAM,
@@ -65,6 +66,7 @@ const restored = (await sessions.get(threadId)).messages.length - 1;
 console.log(
   `\x1b[2m${MODEL} / ${profile.name}:${profile.workspace} / ${STORE}:${STORE_PATH} / thread ${threadId}` +
     (restored > 0 ? `（履歴 ${restored} 件を復元）` : "") +
+    (SETTINGS_FILES.length > 0 ? `\n設定: ${SETTINGS_FILES.join(" < ")}` : "") +
     `\nCtrl+C で終了。作業対象は ${profile.workspace} です。\n\x1b[0m`,
 );
 

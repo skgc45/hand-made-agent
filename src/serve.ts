@@ -3,6 +3,7 @@ import {
   MODEL,
   PORT,
   PROFILE,
+  SETTINGS_FILES,
   STORE,
   STORE_PATH,
   STREAM,
@@ -35,7 +36,8 @@ const sessions = new Sessions({
 const transport = new HttpTransport(PORT);
 
 console.log(
-  `${MODEL} / ${profile.name}:${profile.workspace} / ${STORE}:${STORE_PATH} / http://localhost:${PORT}`,
+  `${MODEL} / ${profile.name}:${profile.workspace} / ${STORE}:${STORE_PATH} / http://localhost:${PORT}` +
+    (SETTINGS_FILES.length > 0 ? `\n設定: ${SETTINGS_FILES.join(" < ")}` : ""),
 );
 
 stopOnSignal(transport);

@@ -137,10 +137,12 @@
         // 「常に許可」は承認と同時にルールを送る。文字列はそのまま権限ルール
         const choices = [["許可", { approved: true }], ["拒否", { approved: false }]];
         if (suggested) {
-          choices.splice(1, 0, [
-            `常に許可: ${suggested}`,
-            { approved: true, rule: suggested },
-          ]);
+          choices.splice(
+            1,
+            0,
+            [`常に許可: ${suggested}`, { approved: true, rule: suggested }],
+            ["保存して常に許可", { approved: true, rule: suggested, save: true }],
+          );
         }
 
         for (const [label, payload] of choices) {

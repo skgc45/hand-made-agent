@@ -51,6 +51,9 @@ npm run typecheck
 
 ### 環境変数
 
+設定ファイル（`.hma/settings.json`）でも同じものを指定できる。**環境変数のほうが強い**ので、
+一時的な実験は環境変数で上書きする。詳しくはステップ8 の節。
+
 | 変数 | 既定 | 意味 |
 |---|---|---|
 | `GEMINI_API_KEY` | — | AI Studio の無料枠キー |
@@ -185,7 +188,8 @@ CLI とサーバーは同じ `.threads/agent.db` を見るので、`hma list` �
 - [x] 4. 捨てる代わりに要約する（compaction）
 - [x] 5. 進捗を UI に出したくなる（AG-UI）+ 承認を Interrupt に載せ替え
 - [x] 6. プロセスを再起動すると履歴が消える（永続化）
-- [x] 7. 承認がツール名でしか効かない（権限ルール）← いまここ
+- [x] 7. 承認がツール名でしか効かない（権限ルール）
+- [x] 8. 環境変数だけだと、決めたことを共有できない（設定ファイル）← いまここ
 
 各ステップは「素で書くと困る → だからフレームワークにその機能がある」を体感するのが目的。
 
@@ -216,13 +220,16 @@ CLI とサーバーは同じ `.threads/agent.db` を見るので、`hma list` �
   harness/     ツール実行に何を挿すか。いまは承認ゲートだけ
     ↑
   permission/  ルールで allow / ask / deny を決める
+    ↑
+  settings/    .hma/*.json を重ねて読む。config.ts の既定になる
 ```
 
 ```
 bin/hma.js             hma コマンド。サブコマンドを entry に振り分ける
 src/cli.ts             エントリ: 層を組み立てて StdioTransport を起動
 src/serve.ts           エントリ: 層を組み立てて HttpTransport を起動
-src/config.ts          環境変数と SYSTEM プロンプト
+src/config.ts          設定ファイル + 環境変数を1箇所に畳む
+src/settings/index.ts  ~/.hma < .hma < .hma/settings.local.json を重ねて読む
 src/shutdown.ts        SIGINT / SIGTERM → transport.stop()
 
 src/agent/loop.ts      Agent クラス。AG-UI イベントを yield する async generator ← 本体
@@ -805,6 +812,108 @@ http で確かめた。承認 UI には**提案されたルールが出て、確
 - **`acceptEdits` / `plan` モード。** いまのプロファイルは編集系を聞いていないので
   `acceptEdits` は `ask` と同じ挙動にしかならない。`plan` は「書けない」ことを system
   プロンプト側でも伝えないと、モデルが deny を食って空回りするだけになる
+
+## ステップ8 で理解すること — 環境変数だけだと共有できない
+
+ステップ7 の `[a]lways` はプロセスが死ねば消える。かといって環境変数に逃がすと、
+今度は「このリポジトリでは `npm test` を許す」をチームで共有できない。逆にモデルや
+ポートのような個人の好みは、共有したくない。**同じ「設定」でも寿命と共有範囲が違う。**
+
+### 3層にする
+
+```
+~/.hma/settings.json        個人の既定。全プロジェクトに効く
+.hma/settings.json          プロジェクト。コミットして共有する
+.hma/settings.local.json    個人 × プロジェクト。gitignore
+```
+
+優先順位は **既定 < user < project < local < 環境変数**。
+
+環境変数を一番上に置いたのは、README のこれを壊さないため。
+
+```bash
+CONTEXT_LIMIT=1200 TRIM=compact npm start
+```
+
+設定ファイルが環境変数に勝つと、一時的な実験ができなくなる。**設定は「普段の値」、
+環境変数は「今回だけ」**。
+
+### permissions だけマージの仕方が違う
+
+スカラーは上の層が下を上書きするが、`allow` / `ask` / `deny` は**全層を連結する**。
+上の層で下の `deny` を消せてしまうと、共有した禁止が個人設定で外せることになる。
+プロファイルの既定（`ask: ["bash"]`）も同じ配列に合流する。
+
+### プロジェクトは cwd で決まる。workspace ではない
+
+設定ファイルが `workspace` を決められるので、workspace から設定を探すと循環する。
+`.hma/` は**起動したディレクトリ**から探す。
+
+### 鍵は設定ファイルから読まない
+
+`GEMINI_API_KEY` / `LLM_API_KEY` は環境変数だけ。`.hma/settings.local.json` は
+gitignore してあるとはいえ、鍵をファイルに書く習慣を作らないため。
+
+### 壊れた設定は、黙って無視されるのが一番困る
+
+読んだ時点で言う。
+
+```
+.hma/settings.local.json: 未知のキー: typo
+.hma/settings.local.json: port は number である必要があります
+.hma/settings.json: ルールの書式が不正です: bash(x
+```
+
+特に**ルールの書式**は、間違っていても「1つも当たらない」だけで普通に動いてしまう。
+`bash(npm test` と書いて「なぜか毎回聞かれる」のを自力で気付くのは難しい。
+
+### `[s]ave` を足した
+
+```
+許可する? [y]es / [n]o / [a]lways / [s]ave:
+許可するルール [bash(cat memo.txt:*)]: bash(cat:*)
+  .hma/settings.local.json に保存しました
+```
+
+`a` はプロセスが生きている間だけ、`s` は `.hma/settings.local.json` に書く。
+**共有される `.hma/settings.json` には勝手に書かない。** あちらはレビューして
+コミットするもの。
+
+### 実測: 別ディレクトリに設定を置いて動かす
+
+```json
+// /tmp/proj/.hma/settings.json
+{
+  "workspace": "work",
+  "permissions": { "allow": ["bash(ls:*)"], "deny": ["bash(rm:*)"] }
+}
+```
+
+`hma serve` をそのディレクトリで起動して、
+
+1. バナーが `sandbox:work` になる（workspace も設定から来ている）
+2. `ls -1` は**聞かれずに実行**された
+3. `rm memo.txt` は「権限ルールで禁止されています」で止まった
+4. ルールに無い `cat memo.txt` は Interrupt。`{"approved":true,"rule":"bash(cat:*)","save":true}`
+   で再開すると `.hma/settings.local.json` が書かれた
+5. **サーバを再起動しても `cat` は聞かれない**
+
+5 がステップ7 との差。
+
+### 起動時にどのファイルを読んだか出す
+
+```
+設定: .hma/settings.json < .hma/settings.local.json
+```
+
+設定ファイルの一番の害は「この値がどこから来たのか分からない」ことなので、
+少なくとも**どのファイルが効いているか**は毎回出す。
+
+### まだやっていないこと
+
+- **CLI フラグ**は `--profile` / `--workspace` だけ（`flags > env > files`）
+- **再読み込み**。起動時に1回だけ読む
+- **`hma config`** のような、いまの実効値を見るコマンド
 
 ## AG-UI はどこに位置するのか — エージェント関連プロトコルの地図
 

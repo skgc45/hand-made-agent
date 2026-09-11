@@ -41,18 +41,22 @@ export class StdioTransport implements Transport {
     console.log(yellow(`\n  ${name} を実行しようとしています:`));
     console.log(yellow(`  ${args}`));
     const answer = await this.ask(
-      yellow("  許可する? [y]es / [n]o / [a]lways: "),
+      yellow("  許可する? [y]es / [n]o / [a]lways / [s]ave: "),
     );
     if (answer === null) return { approved: false };
 
     const choice = answer.trim().toLowerCase();
-    if (choice === "a") {
+    if (choice === "a" || choice === "s") {
       // 何を常に許可したのか、確定する前に見せて直させる
       const edited = await this.ask(
         yellow(`  許可するルール [${suggestedRule}]: `),
       );
       if (edited === null) return { approved: false };
-      return { approved: true, rule: edited.trim() || suggestedRule };
+      return {
+        approved: true,
+        rule: edited.trim() || suggestedRule,
+        save: choice === "s",
+      };
     }
     return { approved: choice === "y" || choice === "" };
   };
