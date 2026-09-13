@@ -46,6 +46,8 @@ export type ToolCallContext = {
   name: string;
   arguments: string;
   messages: readonly OpenAI.ChatCompletionMessageParam[];
+  /** 前の run が実行を始めたまま落ちている。もう一度走らせると二重になりうる */
+  attempted?: boolean;
   /** 中断から再開したときだけ入る。payload をどう読むかはフックが決める */
   resume?: ResumeEntry;
 };
@@ -122,6 +124,10 @@ export type AgentConfig = {
 };
 
 const ABORTED = "中断されました";
+const LOST_RUNNING =
+  "実行の途中でプロセスが落ちたため、結果が残っていません。副作用が出たかどうかは外から分かりません（実行された可能性があります）。";
+const LOST_BEFORE =
+  "実行される前にプロセスが落ちました。このツールは実行されていません。";
 const SUMMARY = "これまでの経緯";
 const FACTS = "分かっている事実";
 
@@ -164,6 +170,8 @@ export type Entry =
       summaryText: string;
     }
   | { kind: "pending"; pending: Pending | null }
+  /** 実行を始めた印。対応する tool 結果が積まれるまで閉じない */
+  | { kind: "attempt"; toolCallId: string; name: string }
   | { kind: "fact"; facts: Fact[] }
   | { kind: "usage"; promptTokens: number; charsPerToken: number };
 
@@ -174,6 +182,10 @@ export class Agent {
   readonly threadId: string;
 
   private pending?: Pending;
+  /** 結果が残っていない実行。落ちた run から持ち越した「走ったかもしれない」 */
+  private readonly attempted = new Set<string>();
+  /** 起動時の後始末の中身。最初の run で1回だけイベントにして捨てる */
+  private recovered: { tool: string; attempted: boolean }[] = [];
   private summaryText = "";
   private readonly graph = new FactGraph();
   private charsPerToken = 3;
@@ -201,7 +213,13 @@ export class Agent {
     for (const entry of entries) {
       switch (entry.kind) {
         case "message":
+          if (entry.message.role === "tool") {
+            this.attempted.delete(entry.message.tool_call_id);
+          }
           this.messages.push(entry.message);
+          break;
+        case "attempt":
+          this.attempted.add(entry.toolCallId);
           break;
         case "history":
           this.replace(entry.messages);
@@ -221,9 +239,56 @@ export class Agent {
           break;
       }
     }
+    this.recover();
     // 保存された messages[0] ではなく、いまの素材から組み直す。
     // プロファイルを変えて同じスレッドを開いたとき、古い system が残らない
     this.syncSystem();
+  }
+
+  /**
+   * 結果の無い tool_calls を埋める。落ちた run が残す唯一の壊れ方で、
+   * 放っておくとモデルは「実行しました」と話を進めてしまう。
+   * 実行したかどうかは attempt の印で分ける。追記はしない（同じログからは毎回同じ結果）。
+   */
+  private recover(): void {
+    const answered = new Set(
+      this.messages.flatMap((m) => (m.role === "tool" ? [m.tool_call_id] : [])),
+    );
+    // 承認待ちの分はこれから実行するので、埋めると二重になる
+    const pendingIds = new Set(
+      this.pending?.calls.slice(this.pending.index).map((c) => c.id) ?? [],
+    );
+
+    const next: OpenAI.ChatCompletionMessageParam[] = [];
+    let missing: OpenAI.ChatCompletionMessageToolCall[] = [];
+    const flush = () => {
+      for (const call of missing) {
+        const attempted = this.attempted.has(call.id);
+        next.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: attempted ? LOST_RUNNING : LOST_BEFORE,
+        });
+        this.recovered.push({
+          tool: call.type === "function" ? call.function.name : call.type,
+          attempted,
+        });
+      }
+      missing = [];
+    };
+
+    for (const message of this.messages) {
+      if (message.role !== "tool") flush();
+      next.push(message);
+      if (message.role === "assistant" && message.tool_calls?.length) {
+        missing = message.tool_calls.filter(
+          (c) => !answered.has(c.id) && !pendingIds.has(c.id),
+        );
+      }
+    }
+    flush();
+
+    if (next.length !== this.messages.length) this.replace(next);
   }
 
   private async poll(
@@ -263,6 +328,15 @@ export class Agent {
       threadId: this.threadId,
       runId,
     };
+
+    if (this.recovered.length > 0) {
+      yield {
+        type: EventType.CUSTOM,
+        name: "recovered",
+        value: { calls: this.recovered },
+      };
+      this.recovered = [];
+    }
 
     let stopped = false;
 
@@ -441,6 +515,7 @@ export class Agent {
         continue;
       }
 
+      const attempted = this.attempted.has(call.id);
       // 再開した1件だけ resume を添えて、同じフックにもう一度聞く。
       // ループは payload の中身を知らない
       const decision = await this.config.beforeToolCall?.(
@@ -449,6 +524,7 @@ export class Agent {
           name,
           arguments: args,
           messages: this.messages,
+          attempted,
           resume: i === startIndex ? resumed?.entry : undefined,
         },
         signal,
@@ -495,9 +571,26 @@ export class Agent {
       }
 
       const blocked = decision?.kind === "block";
-      let result = blocked
-        ? decision.reason
-        : await this.config.toolset.execute(name, JSON.parse(args), signal);
+      let result: string;
+      if (blocked) {
+        result = decision.reason;
+      } else {
+        if (attempted) {
+          yield {
+            type: EventType.CUSTOM,
+            name: "reexec",
+            value: { tool: name, arguments: args },
+          };
+        }
+        // 実行する前に印を残す。結果が積まれないまま落ちたら、
+        // 次の起動で「走ったかもしれない」と言える
+        await this.record({ kind: "attempt", toolCallId: call.id, name });
+        result = await this.config.toolset.execute(
+          name,
+          JSON.parse(args),
+          signal,
+        );
+      }
       let terminate = blocked ? decision.terminate === true : false;
 
       const after = await this.config.afterToolCall?.(
@@ -537,6 +630,7 @@ export class Agent {
       tool_call_id: call.id,
       content,
     });
+    this.attempted.delete(call.id);
     yield {
       type: EventType.TOOL_CALL_RESULT,
       messageId: randomUUID(),

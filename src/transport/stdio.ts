@@ -37,7 +37,19 @@ export class StdioTransport implements Transport {
     }
   }
 
-  approve: AskFn = async ({ name, arguments: args, suggestedRule }) => {
+  approve: AskFn = async ({
+    name,
+    arguments: args,
+    suggestedRule,
+    attempted,
+  }) => {
+    if (attempted) {
+      console.log(
+        yellow(
+          "\n  ⚠ 前回このツールは実行を始めたまま落ちています。二重実行になるかもしれません",
+        ),
+      );
+    }
     console.log(yellow(`\n  ${name} を実行しようとしています:`));
     console.log(yellow(`  ${args}`));
     const answer = await this.ask(

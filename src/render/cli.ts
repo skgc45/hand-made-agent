@@ -77,6 +77,17 @@ export class CliRenderer {
           ? { text: yellow(`  [${body} — 応答を読めず抽出できなかった]`) }
           : { text: dim(`  [${body}]`) };
       }
+      case "recovered": {
+        const calls = v.calls as { tool: string; attempted: boolean }[];
+        const body = calls
+          .map((c) => `${c.tool} は${c.attempted ? "走ったかもしれない" : "未実行"}`)
+          .join(" / ");
+        return { text: yellow(`  [前の run が落ちています — ${body}]`) };
+      }
+      case "reexec":
+        return {
+          text: yellow(`  [${v.tool} を再実行します — 前回走ったかもしれません]`),
+        };
       case "steering":
         return {
           text: dim(`  [割り込み: ${(v.messages as string[]).join(" / ")}]`),

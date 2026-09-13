@@ -2,12 +2,16 @@ import type { BeforeToolCall } from "../agent/loop.js";
 import type { Permissions } from "../permission/index.js";
 
 const DENIED = "ユーザーが実行を拒否しました。別の方法を検討してください。";
+const ATTEMPTED =
+  "⚠ 前回このツールは実行を始めたまま落ちています。もう一度実行すると二重になるかもしれません。\n";
 const BLOCKED =
   "権限ルールで禁止されています。このツールでは実行できません。別の方法を検討してください。";
 
 export type ApprovalRequest = {
   name: string;
   arguments: string;
+  /** 前の run が実行を始めたまま落ちている。通せば二重実行になりうる */
+  attempted?: boolean;
   /** 当たるルールを作れないときは無い。UI は「常に許可」を出さない */
   suggestedRule?: string;
 };
@@ -64,7 +68,7 @@ export function approvalHook(
   ask?: AskFn,
   save?: SaveFn,
 ): BeforeToolCall {
-  return async ({ name, arguments: args, resume }) => {
+  return async ({ name, arguments: args, attempted, resume }) => {
     // 中断から戻ってきた。payload の読み方を知っているのはここだけ
     if (resume) {
       const payload = resume.payload as
@@ -83,7 +87,7 @@ export function approvalHook(
     const suggestedRule = permissions.suggestRule(name, input);
 
     if (ask) {
-      const result = await ask({ name, arguments: args, suggestedRule });
+      const result = await ask({ name, arguments: args, suggestedRule, attempted });
       if (result.approved) await remember(permissions, result, save);
       return result.approved ? undefined : { kind: "block", reason: DENIED };
     }
@@ -92,7 +96,7 @@ export function approvalHook(
       kind: "suspend",
       interrupt: {
         reason: "tool_approval",
-        message: `${name} を実行しますか？`,
+        message: `${attempted ? ATTEMPTED : ""}${name} を実行しますか？`,
         metadata: suggestedRule
           ? { name, arguments: args, suggestedRule }
           : { name, arguments: args },
