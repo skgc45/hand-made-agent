@@ -18,6 +18,8 @@ import {
 import { collectContext } from "./context/index.js";
 import { type Hooks, createHooks } from "./harness/index.js";
 import { withSubagents } from "./agent/subagent.js";
+import { loadCommands } from "./commands/index.js";
+import { loadSkills, withSkills } from "./skills/index.js";
 import { describeTrust } from "./settings/trust.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
@@ -28,13 +30,18 @@ import { HttpTransport } from "./transport/index.js";
 
 // 子は親と同じフックを通す。プロファイルとフックが互いに要るので、中身だけ後から差す
 const hooks: Hooks = {};
-const { profile, jobs } = withSubagents(createProfile(PROFILE, WORKSPACE), {
-  client: createClient(),
-  model: MODEL,
-  contextLimit: CONTEXT_LIMIT,
-  trim: TRIM,
-  hooks,
-});
+const skills = await loadSkills();
+const commands = await loadCommands();
+const { profile, jobs } = withSubagents(
+  withSkills(createProfile(PROFILE, WORKSPACE), skills),
+  {
+    client: createClient(),
+    model: MODEL,
+    contextLimit: CONTEXT_LIMIT,
+    trim: TRIM,
+    hooks,
+  },
+);
 
 // serve は入力を待てないので聞けない。無効にして、やり方だけ言う
 if (NEEDS_TRUST) {
@@ -47,6 +54,7 @@ const sections = await collectContext({
   workspace: WORKSPACE,
   mode: APPROVAL,
   sessionStart: hooksFor(!NEEDS_TRUST).SessionStart ?? [],
+  skills,
 });
 
 const sessions = new Sessions({
@@ -57,7 +65,10 @@ const sessions = new Sessions({
   contextLimit: CONTEXT_LIMIT,
   trim: TRIM,
   stream: STREAM,
-  ...Object.assign(hooks, createHooks({ profile, trusted: !NEEDS_TRUST })),
+  ...Object.assign(
+    hooks,
+    createHooks({ profile, trusted: !NEEDS_TRUST, commands }),
+  ),
   jobs,
   store: createStore(),
   telemetry: createTelemetry(),

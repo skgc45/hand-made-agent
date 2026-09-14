@@ -11,7 +11,7 @@ export type TelemetryRow = {
   profile: string;
   model: string;
   type: string;
-  /** CUSTOM の name（usage / trim / compact / graph / retry / steering / gate / recovered / reexec / subagent） */
+  /** CUSTOM の name（usage / trim / compact / graph / retry / steering / gate / recovered / reexec / subagent / prompt） */
   name: string;
   tool: string;
   /** TOOL_CALL_START と TOOL_CALL_RESULT を突き合わせるため */

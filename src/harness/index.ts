@@ -1,4 +1,5 @@
-import { composeAfter, composeBefore } from "../agent/compose.js";
+import { composeAfter, composeBefore, composeUser } from "../agent/compose.js";
+import { type Command, commandHook } from "../commands/index.js";
 import type {
   AfterToolCall,
   BeforeToolCall,
@@ -20,6 +21,8 @@ export type HarnessOptions = {
   ask?: AskFn;
   /** .hma の中身を本人が承認したか。false なら緩める方向の設定を落とす */
   trusted: boolean;
+  /** スラッシュコマンド。入力を本文に差し替える */
+  commands?: Command[];
 };
 
 export type Hooks = {
@@ -54,7 +57,12 @@ export function modeRules(profile: Profile, mode: string): PermissionSet {
 }
 
 /** ツール実行に挿すものを1箇所で束ねる。増えていくのはこの配列 */
-export function createHooks({ profile, ask, trusted }: HarnessOptions): Hooks {
+export function createHooks({
+  profile,
+  ask,
+  trusted,
+  commands = [],
+}: HarnessOptions): Hooks {
   const permissions = createPermissions(
     mergePermissions(
       profile.permissions,
@@ -89,7 +97,11 @@ export function createHooks({ profile, ask, trusted }: HarnessOptions): Hooks {
       truncateResult(),
       postToolUse(hooks.PostToolUse ?? []),
     ]),
-    beforeUserMessage: userPromptSubmit(hooks.UserPromptSubmit ?? []),
+    // コマンドを先に展開する。外部フックは展開後の本文を見て止められる
+    beforeUserMessage: composeUser([
+      commandHook(commands),
+      userPromptSubmit(hooks.UserPromptSubmit ?? []),
+    ]),
     onStop: onStop(hooks.Stop ?? []),
   };
 }

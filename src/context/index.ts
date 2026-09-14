@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { PromptSection } from "../agent/prompt.js";
 import { type HookConfig, runHook } from "../hooks/index.js";
+import { type Skill, skillsSection } from "../skills/index.js";
 
 const exec = promisify(execFile);
 
@@ -90,6 +91,8 @@ export type ContextOptions = {
   mode: string;
   /** 信頼済みの SessionStart フックだけ渡ってくる */
   sessionStart: HookConfig[];
+  /** 名前と説明だけを節にする。本文は skill ツールで取りに行かせる */
+  skills?: Skill[];
 };
 
 /** 起動時に1回だけ集める。IO を伴うので Agent の外に置く */
@@ -97,6 +100,7 @@ export async function collectContext({
   workspace,
   mode,
   sessionStart,
+  skills = [],
 }: ContextOptions): Promise<PromptSection[]> {
   const sections: PromptSection[] = [];
 
@@ -106,6 +110,9 @@ export async function collectContext({
 
   const memory = await projectMemory();
   if (memory) sections.push({ heading: "このプロジェクトの決まり", body: memory });
+
+  const skillsPart = skillsSection(skills);
+  if (skillsPart) sections.push(skillsPart);
 
   const started: string[] = [];
   for (const hook of sessionStart) {

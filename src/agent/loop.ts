@@ -87,9 +87,10 @@ export type AfterToolCall = (
   signal?: AbortSignal,
 ) => Promise<AfterToolCallResult>;
 
-/** 入力を履歴に積む前の穴。止めるか、文脈を足すか、何もしないか */
+/** 入力を履歴に積む前の穴。止めるか、差し替えるか、文脈を足すか、何もしないか */
 export type BeforeUserMessageResult =
-  { blocked?: string; context?: string } | undefined;
+  | { blocked?: string; replace?: string; context?: string }
+  | undefined;
 
 export type BeforeUserMessage = (
   text: string,
@@ -378,7 +379,21 @@ export class Agent {
           };
           return;
         }
-        await this.pushMessage({ role: "user", content: userInput });
+        // 差し替えたぶんが履歴に残る（スラッシュコマンドはここで本文になる）
+        if (decision?.replace !== undefined) {
+          yield {
+            type: EventType.CUSTOM,
+            name: "prompt",
+            value: {
+              from: userInput.trim().slice(0, 40),
+              chars: decision.replace.length,
+            },
+          };
+        }
+        await this.pushMessage({
+          role: "user",
+          content: decision?.replace ?? userInput,
+        });
         if (decision?.context) {
           await this.pushMessage({ role: "user", content: decision.context });
         }

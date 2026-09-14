@@ -101,6 +101,8 @@ export class CliRenderer {
           ),
         };
       }
+      case "prompt":
+        return { text: dim(`  [${v.from} を展開しました（${v.chars} 文字）]`) };
       case "steering":
         return {
           text: dim(

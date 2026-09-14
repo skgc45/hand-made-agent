@@ -24,6 +24,8 @@ import {
 import { collectContext } from "./context/index.js";
 import { type Hooks, createHooks, modeRules } from "./harness/index.js";
 import { withSubagents } from "./agent/subagent.js";
+import { loadCommands } from "./commands/index.js";
+import { loadSkills, withSkills } from "./skills/index.js";
 import { describeTrust, recordTrust } from "./settings/trust.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
@@ -108,8 +110,13 @@ if (opts.config) {
   }
 
   const ORDER = ["deny", "allow", "ask"] as const;
+  const skills = await loadSkills();
+  const commands = await loadCommands();
   const { profile: current } = withSubagents(
-    createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
+    withSkills(
+      createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
+      skills,
+    ),
     { ...subagentDeps(), hooks: {} },
   );
   const rules = [
@@ -157,10 +164,29 @@ if (opts.config) {
     );
   }
 
+  console.log("\nスキル（名前と説明だけが system に載る。本文は skill ツールで読む）:");
+  if (skills.length === 0) console.log("  （なし）");
+  const skillWidth = Math.max(1, ...skills.map((s) => cells(s.name)));
+  for (const skill of skills) {
+    console.log(
+      `  ${pad(skill.name, skillWidth)}  ${skill.description}  \x1b[2m${skill.source}\x1b[0m`,
+    );
+  }
+
+  console.log("\nスラッシュコマンド（入力を本文に差し替える）:");
+  if (commands.length === 0) console.log("  （なし）");
+  const commandWidth = Math.max(1, ...commands.map((c) => cells(c.name) + 1));
+  for (const command of commands) {
+    console.log(
+      `  ${pad(`/${command.name}`, commandWidth)}  \x1b[2m${command.body.length} 文字  ${command.source}\x1b[0m`,
+    );
+  }
+
   const context = await collectContext({
     workspace: opts.workspace ?? WORKSPACE,
     mode: APPROVAL,
     sessionStart: hooksFor(!NEEDS_TRUST).SessionStart ?? [],
+    skills,
   });
   console.log("\nsystem プロンプトに載る文脈:");
   if (context.length === 0) console.log("  （なし）");
@@ -185,8 +211,13 @@ function subagentDeps() {
 
 // 子は親と同じフックを通す。プロファイルとフックが互いに要るので、中身だけ後から差す
 const hooks: Hooks = {};
+const skills = await loadSkills();
+const commands = await loadCommands();
 const { profile, jobs } = withSubagents(
-  createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
+  withSkills(
+    createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
+    skills,
+  ),
   { ...subagentDeps(), hooks },
 );
 
@@ -210,6 +241,7 @@ const sections = await collectContext({
   workspace: profile.workspace,
   mode: APPROVAL,
   sessionStart: hooksFor(trusted).SessionStart ?? [],
+  skills,
 });
 
 const transport = new StdioTransport(threadId);
@@ -221,7 +253,10 @@ const sessions = new Sessions({
   contextLimit: CONTEXT_LIMIT,
   trim: TRIM,
   stream: STREAM,
-  ...Object.assign(hooks, createHooks({ profile, ask: transport.approve, trusted })),
+  ...Object.assign(
+    hooks,
+    createHooks({ profile, ask: transport.approve, trusted, commands }),
+  ),
   jobs,
   store,
   telemetry: createTelemetry(),
