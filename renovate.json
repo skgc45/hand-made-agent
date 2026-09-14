@@ -1,47 +1,38 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended",
-    "helpers:pinGitHubActionDigests"
-  ],
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
   "timezone": "Asia/Tokyo",
-  "schedule": [
-    "* 0-6 * * 1"
-  ],
+  "schedule": ["* 0-6 * * 1"],
   "prConcurrentLimit": 3,
+  "platformAutomerge": true,
+  "automergeSchedule": ["at any time"],
+  "automergeStrategy": "squash",
   "packageRules": [
     {
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
-      ],
-      "groupName": "依存の更新（minor / patch）"
+      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
+      "groupName": "依存の更新（minor / patch）",
+      "automerge": true
     },
     {
-      "matchManagers": [
-        "github-actions"
-      ],
+      "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions"
     },
     {
-      "matchPackageNames": [
-        "node"
-      ],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "matchPackageNames": ["node"],
       "enabled": false
     }
   ],
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": [
-      "* 0-6 * * 1"
-    ]
+    "schedule": ["* 0-6 * * 1"],
+    "automerge": true
   },
   "vulnerabilityAlerts": {
-    "labels": [
-      "security"
-    ],
-    "schedule": [
-      "at any time"
-    ]
+    "labels": ["security"],
+    "schedule": ["at any time"]
   }
 }
