@@ -1,8 +1,8 @@
-import type OpenAI from "openai";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import type OpenAI from "openai";
 import type { Toolset } from "./toolset.js";
 
 const exec = promisify(execFile);
@@ -191,6 +191,7 @@ export function createFileTools(workspace: string): Toolset {
 
   const handlers: Record<
     string,
+    // biome-ignore lint/suspicious/noExplicitAny: ハンドラごとに引数の形が違う
     (input: any, signal?: AbortSignal) => Promise<string>
   > = {
     async glob({ pattern }) {
@@ -217,7 +218,7 @@ export function createFileTools(workspace: string): Toolset {
       const hits: string[] = [];
       for await (const rel of walk(glob)) {
         const abs = path.resolve(ROOT, rel);
-        let stat;
+        let stat: Awaited<ReturnType<typeof fs.stat>>;
         try {
           stat = await fs.stat(abs);
         } catch {

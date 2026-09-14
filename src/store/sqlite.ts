@@ -1,12 +1,12 @@
-import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { Entry } from "../agent/loop.js";
 import {
-  type Store,
-  type ThreadSummary,
   assertThreadId,
+  type Store,
   summaryDelta,
+  type ThreadSummary,
 } from "./index.js";
 
 export class SqliteStore implements Store {

@@ -48,6 +48,7 @@ switch (sub) {
   case "-h":
     process.stdout.write(USAGE);
     process.exit(0);
+    break;
   default:
     args = sub === undefined ? rest : [sub, ...rest];
 }

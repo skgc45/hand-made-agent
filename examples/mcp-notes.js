@@ -28,7 +28,9 @@ const TOOLS = [
 
 function call(name, args) {
   if (name === "note_list") {
-    return [...notes.entries()].map(([k, v]) => `${k}: ${v}`).join("\n") || "(空)";
+    return (
+      [...notes.entries()].map(([k, v]) => `${k}: ${v}`).join("\n") || "(空)"
+    );
   }
   if (name === "note_write") {
     notes.set(args.key, args.text);
@@ -64,10 +66,18 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "tools/call":
       try {
         reply({
-          content: [{ type: "text", text: call(message.params.name, message.params.arguments ?? {}) }],
+          content: [
+            {
+              type: "text",
+              text: call(message.params.name, message.params.arguments ?? {}),
+            },
+          ],
         });
       } catch (error) {
-        reply({ content: [{ type: "text", text: error.message }], isError: true });
+        reply({
+          content: [{ type: "text", text: error.message }],
+          isError: true,
+        });
       }
       break;
     default:

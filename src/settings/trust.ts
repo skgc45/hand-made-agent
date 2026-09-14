@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import {
   type HookSource,
+  loadSettings,
   type McpSource,
   type RuleSource,
-  loadSettings,
 } from "./index.js";
 
 const FILE = path.join(os.homedir(), ".hma", "trust.json");
@@ -39,7 +39,11 @@ export function fingerprint(subject: ReturnType<typeof trustSubject>): string {
       h.hook.timeout ?? 0,
     ]),
     subject.rules.map((r) => r.rule),
-    subject.mcp.map((m) => [m.name, m.config.command, ...(m.config.args ?? [])]),
+    subject.mcp.map((m) => [
+      m.name,
+      m.config.command,
+      ...(m.config.args ?? []),
+    ]),
   ]);
   return createHash("sha256").update(canonical).digest("hex");
 }
@@ -87,9 +91,7 @@ export function describeTrust(
       ({ event, hook, source }) =>
         `  実行  ${event} ${hook.matcher ? `(${hook.matcher}) ` : ""}${hook.command}  ← ${source}`,
     ),
-    ...subject.rules.map(
-      ({ rule, source }) => `  許可  ${rule}  ← ${source}`,
-    ),
+    ...subject.rules.map(({ rule, source }) => `  許可  ${rule}  ← ${source}`),
     ...subject.mcp.map(
       ({ name, config, source }) =>
         `  起動  MCP ${name}: ${config.command} ${(config.args ?? []).join(" ")}  ← ${source}`,

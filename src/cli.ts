@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
 import * as readline from "node:readline/promises";
 import { parseArgs } from "node:util";
+import { withSubagents } from "./agent/subagent.js";
+import { loadCommands } from "./commands/index.js";
 import {
   APPROVAL,
   CONTEXT_LIMIT,
+  createClient,
+  describeConfig,
+  hooksFor,
   MODEL,
+  mcpServersFor,
   NEEDS_TRUST,
   PROFILE,
   SETTINGS_FILES,
@@ -18,28 +24,22 @@ import {
   TRUST_PRINT,
   TRUST_SUBJECT,
   WORKSPACE,
-  createClient,
-  describeConfig,
-  hooksFor,
-  mcpServersFor,
 } from "./config.js";
 import { collectContext } from "./context/index.js";
 import {
-  type Hooks,
   createHooks,
+  type Hooks,
   mcpRules,
   modeRules,
 } from "./harness/index.js";
-import { withSubagents } from "./agent/subagent.js";
-import { loadCommands } from "./commands/index.js";
-import { loadSkills, withSkills } from "./skills/index.js";
 import { connectMcp, withMcp } from "./mcp/index.js";
-import { describeTrust, recordTrust } from "./settings/trust.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
+import { describeTrust, recordTrust } from "./settings/trust.js";
+import { stopOnSignal } from "./shutdown.js";
+import { loadSkills, withSkills } from "./skills/index.js";
 import { createStore } from "./store/index.js";
 import { createTelemetry } from "./telemetry/index.js";
-import { stopOnSignal } from "./shutdown.js";
 import { StdioTransport } from "./transport/index.js";
 
 const { values: opts } = parseArgs({
@@ -68,11 +68,15 @@ async function askTrust(): Promise<boolean> {
     input: process.stdin,
     output: process.stdout,
   });
-  const answer = await rl.question("\x1b[33m信頼しますか? [y]es / [n]o: \x1b[0m");
+  const answer = await rl.question(
+    "\x1b[33m信頼しますか? [y]es / [n]o: \x1b[0m",
+  );
   rl.close();
 
   if (answer.trim().toLowerCase() !== "y") {
-    console.log("\x1b[2m  信頼しませんでした。フックと allow は無効のまま進みます。\x1b[0m\n");
+    console.log(
+      "\x1b[2m  信頼しませんでした。フックと allow は無効のまま進みます。\x1b[0m\n",
+    );
     return false;
   }
   await recordTrust(TRUST_PRINT);
@@ -100,7 +104,9 @@ if (opts.config) {
   if (SETTINGS_FILES.length > 0) {
     console.log(`設定ファイル: ${SETTINGS_FILES.join(" < ")}\n`);
   } else {
-    console.log("設定ファイル: なし（.hma/settings.json は起動したディレクトリから探す）\n");
+    console.log(
+      "設定ファイル: なし（.hma/settings.json は起動したディレクトリから探す）\n",
+    );
   }
 
   // 全角は2桁。ASCII 前提の padEnd だと表がずれる
@@ -164,12 +170,17 @@ if (opts.config) {
     ),
   ].sort((a, b) => ORDER.indexOf(a.action) - ORDER.indexOf(b.action));
 
-  console.log("\n権限ルール（deny > allow > ask の順に見る。どれにも当たらなければ通す）:");
+  console.log(
+    "\n権限ルール（deny > allow > ask の順に見る。どれにも当たらなければ通す）:",
+  );
   if (rules.length === 0) console.log("  （なし）");
   const ruleWidth = Math.max(1, ...rules.map((r) => cells(r.rule)));
   for (const { action, rule, source, layer } of rules) {
     const off =
-      NEEDS_TRUST && layer !== undefined && layer !== "user" && action === "allow";
+      NEEDS_TRUST &&
+      layer !== undefined &&
+      layer !== "user" &&
+      action === "allow";
     console.log(
       `  ${pad(action, 5)}  ${pad(rule, ruleWidth)}  \x1b[2m${source}${off ? " — 未信頼のため無効" : ""}\x1b[0m`,
     );
@@ -203,7 +214,9 @@ if (opts.config) {
   }
   mcp.close();
 
-  console.log("\nスキル（名前と説明だけが system に載る。本文は skill ツールで読む）:");
+  console.log(
+    "\nスキル（名前と説明だけが system に載る。本文は skill ツールで読む）:",
+  );
   if (skills.length === 0) console.log("  （なし）");
   const skillWidth = Math.max(1, ...skills.map((s) => cells(s.name)));
   for (const skill of skills) {

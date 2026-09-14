@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Entry } from "../agent/loop.js";
 import {
-  type Store,
-  type ThreadSummary,
   assertThreadId,
+  type Store,
   summaryDelta,
+  type ThreadSummary,
 } from "./index.js";
 
 /** 1スレッド1ファイルの JSONL。追記なので既存行は触らない */

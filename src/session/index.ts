@@ -2,17 +2,17 @@ import { EventType } from "@ag-ui/core";
 import type OpenAI from "openai";
 import {
   type AfterToolCall,
-  type AgentEvent,
   Agent,
+  type AgentEvent,
   type BeforeToolCall,
   type BeforeUserMessage,
 } from "../agent/loop.js";
 import type { PromptSection } from "../agent/prompt.js";
 import type { JobQueue } from "../agent/subagent.js";
 import type { Profile } from "../profile/index.js";
-import { MessageQueue } from "./queue.js";
 import type { Store, ThreadSummary } from "../store/index.js";
 import { type Telemetry, toRow } from "../telemetry/index.js";
+import { MessageQueue } from "./queue.js";
 
 export type SessionsConfig = {
   client: OpenAI;
@@ -101,7 +101,8 @@ export class Sessions {
           const queued = queues.followUp.drain();
           if (queued.length > 0) return queued;
           // まだ走っている子がいるなら、止まる前に待って回収する
-          if (this.config.jobs?.running()) return await this.config.jobs.settle();
+          if (this.config.jobs?.running())
+            return await this.config.jobs.settle();
           if (!this.config.onStop || this.stopAsked.has(threadId)) return [];
           this.stopAsked.add(threadId);
           return await this.config.onStop();

@@ -1,9 +1,9 @@
 import type { Entry } from "../agent/loop.js";
 import {
-  type Store,
-  type ThreadSummary,
   assertThreadId,
+  type Store,
   summaryDelta,
+  type ThreadSummary,
 } from "./index.js";
 
 /** 永続化しない実装。ステップ6 以前の挙動をそのまま再現する */

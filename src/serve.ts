@@ -1,7 +1,12 @@
+import { withSubagents } from "./agent/subagent.js";
+import { loadCommands } from "./commands/index.js";
 import {
   APPROVAL,
   CONTEXT_LIMIT,
+  createClient,
+  hooksFor,
   MODEL,
+  mcpServersFor,
   NEEDS_TRUST,
   PORT,
   PROFILE,
@@ -12,22 +17,17 @@ import {
   TRIM,
   TRUST_SUBJECT,
   WORKSPACE,
-  createClient,
-  hooksFor,
-  mcpServersFor,
 } from "./config.js";
 import { collectContext } from "./context/index.js";
-import { type Hooks, createHooks } from "./harness/index.js";
-import { withSubagents } from "./agent/subagent.js";
-import { loadCommands } from "./commands/index.js";
-import { loadSkills, withSkills } from "./skills/index.js";
+import { createHooks, type Hooks } from "./harness/index.js";
 import { connectMcp, withMcp } from "./mcp/index.js";
-import { describeTrust } from "./settings/trust.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
+import { describeTrust } from "./settings/trust.js";
+import { stopOnSignal } from "./shutdown.js";
+import { loadSkills, withSkills } from "./skills/index.js";
 import { createStore } from "./store/index.js";
 import { createTelemetry } from "./telemetry/index.js";
-import { stopOnSignal } from "./shutdown.js";
 import { HttpTransport } from "./transport/index.js";
 
 // 子は親と同じフックを通す。プロファイルとフックが互いに要るので、中身だけ後から差す
@@ -48,9 +48,13 @@ const { profile, jobs } = withSubagents(
 
 // serve は入力を待てないので聞けない。無効にして、やり方だけ言う
 if (NEEDS_TRUST) {
-  console.error("\x1b[33m未確認の .hma があるため、フックと allow を無効にしました:\x1b[0m");
+  console.error(
+    "\x1b[33m未確認の .hma があるため、フックと allow を無効にしました:\x1b[0m",
+  );
   for (const line of describeTrust(TRUST_SUBJECT)) console.error(line);
-  console.error("\x1b[2m  有効にするには、このディレクトリで hma trust を実行してください。\x1b[0m");
+  console.error(
+    "\x1b[2m  有効にするには、このディレクトリで hma trust を実行してください。\x1b[0m",
+  );
 }
 
 const sections = await collectContext({

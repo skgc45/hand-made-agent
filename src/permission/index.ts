@@ -1,9 +1,9 @@
 import {
-  type Rule,
-  type Subject,
   formatRule,
   hits,
   parseRule,
+  type Rule,
+  type Subject,
   subjectsOf,
 } from "./rules.js";
 

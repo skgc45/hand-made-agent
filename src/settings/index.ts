@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -77,7 +77,10 @@ function warn(file: string, message: string): void {
   console.error(`\x1b[33m${display(file)}: ${message}\x1b[0m`);
 }
 
-function readPermissions(file: string, value: unknown): PermissionSet | undefined {
+function readPermissions(
+  file: string,
+  value: unknown,
+): PermissionSet | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     warn(file, "permissions はオブジェクトである必要があります");
     return undefined;
@@ -124,7 +127,10 @@ function readHooks(file: string, value: unknown): HookSet | undefined {
 
   for (const key of Object.keys(source)) {
     if (!HOOK_EVENTS.includes(key as HookEvent)) {
-      warn(file, `hooks の未知のイベント: ${key}（${HOOK_EVENTS.join(" / ")}）`);
+      warn(
+        file,
+        `hooks の未知のイベント: ${key}（${HOOK_EVENTS.join(" / ")}）`,
+      );
       continue;
     }
     const list = source[key];

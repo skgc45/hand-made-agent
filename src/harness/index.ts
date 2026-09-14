@@ -1,19 +1,24 @@
 import { composeAfter, composeBefore, composeUser } from "../agent/compose.js";
-import { type Command, commandHook } from "../commands/index.js";
 import type {
   AfterToolCall,
   BeforeToolCall,
   BeforeUserMessage,
 } from "../agent/loop.js";
+import { type Command, commandHook } from "../commands/index.js";
 import { APPROVAL, hooksFor, permissionsFor } from "../config.js";
-import { createPermissions } from "../permission/index.js";
 import type { PermissionSet } from "../permission/index.js";
+import { createPermissions } from "../permission/index.js";
 import type { Profile } from "../profile/index.js";
 import { mergePermissions, saveAllowRule } from "../settings/index.js";
 import { retrust } from "../settings/trust.js";
 import { type AskFn, approvalHook } from "./approval.js";
+import {
+  onStop,
+  postToolUse,
+  preToolUse,
+  userPromptSubmit,
+} from "./external.js";
 import { readBeforeEdit, truncateResult } from "./files.js";
-import { onStop, postToolUse, preToolUse, userPromptSubmit } from "./external.js";
 
 export type HarnessOptions = {
   profile: Profile;

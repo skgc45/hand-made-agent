@@ -68,7 +68,9 @@ export function expand(text: string, commands: Command[]): string | undefined {
       : command.body;
 }
 
-export function commandHook(commands: Command[]): BeforeUserMessage | undefined {
+export function commandHook(
+  commands: Command[],
+): BeforeUserMessage | undefined {
   if (commands.length === 0) return undefined;
 
   return async (text) => {

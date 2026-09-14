@@ -104,12 +104,14 @@ export async function collectContext({
 }: ContextOptions): Promise<PromptSection[]> {
   const sections: PromptSection[] = [];
 
-  if (mode === "plan") sections.push({ heading: "いまは計画モード", body: PLAN });
+  if (mode === "plan")
+    sections.push({ heading: "いまは計画モード", body: PLAN });
 
   sections.push({ heading: "環境", body: await environment(workspace) });
 
   const memory = await projectMemory();
-  if (memory) sections.push({ heading: "このプロジェクトの決まり", body: memory });
+  if (memory)
+    sections.push({ heading: "このプロジェクトの決まり", body: memory });
 
   const skillsPart = skillsSection(skills);
   if (skillsPart) sections.push(skillsPart);
@@ -123,7 +125,10 @@ export async function collectContext({
     if (outcome.context) started.push(outcome.context);
   }
   if (started.length > 0) {
-    sections.push({ heading: "起動時に集めた情報", body: started.join("\n\n") });
+    sections.push({
+      heading: "起動時に集めた情報",
+      body: started.join("\n\n"),
+    });
   }
 
   return sections;

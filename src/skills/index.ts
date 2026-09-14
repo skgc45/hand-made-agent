@@ -56,7 +56,9 @@ async function readDir(dir: string, source: string): Promise<Skill[]> {
     }
     const { fields } = frontmatter(text);
     if (!fields.description) {
-      console.error(`\x1b[33m${file} に description がありません。飛ばします\x1b[0m`);
+      console.error(
+        `\x1b[33m${file} に description がありません。飛ばします\x1b[0m`,
+      );
       continue;
     }
     skills.push({
@@ -72,7 +74,10 @@ async function readDir(dir: string, source: string): Promise<Skill[]> {
 /** ~/.hma < .hma の順。同じ名前ならプロジェクト側が勝つ */
 export async function loadSkills(): Promise<Skill[]> {
   const found = [
-    ...(await readDir(path.join(os.homedir(), ".hma", "skills"), "~/.hma/skills")),
+    ...(await readDir(
+      path.join(os.homedir(), ".hma", "skills"),
+      "~/.hma/skills",
+    )),
     ...(await readDir(path.resolve(".hma", "skills"), ".hma/skills")),
   ];
 
@@ -112,7 +117,8 @@ export function createSkillTools(skills: Skill[]): Toolset {
             name: { type: "string", description: "スキルの名前" },
             file: {
               type: "string",
-              description: "スキルのディレクトリからの相対パス（省略時は SKILL.md）",
+              description:
+                "スキルのディレクトリからの相対パス（省略時は SKILL.md）",
             },
           },
           required: ["name"],

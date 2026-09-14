@@ -40,7 +40,9 @@ export class McpClient {
       env: { ...process.env, ...config.env },
     });
 
-    createInterface({ input: this.child.stdout! }).on("line", (line) => {
+    const stdout = this.child.stdout;
+    if (!stdout) throw new Error(`${this.name}: stdout を開けません`);
+    createInterface({ input: stdout }).on("line", (line) => {
       this.receive(line);
     });
     // サーバのログは stderr に出る。混ぜると JSON-RPC が壊れるので、そのまま流すだけ
@@ -59,7 +61,11 @@ export class McpClient {
   }
 
   private receive(line: string): void {
-    let message: { id?: number; result?: unknown; error?: { message?: string } };
+    let message: {
+      id?: number;
+      result?: unknown;
+      error?: { message?: string };
+    };
     try {
       message = JSON.parse(line);
     } catch {
@@ -84,13 +90,18 @@ export class McpClient {
   }
 
   private request(method: string, params?: unknown): Promise<unknown> {
-    if (this.closed) return Promise.reject(new Error(`${this.name}: 接続されていません`));
+    if (this.closed)
+      return Promise.reject(new Error(`${this.name}: 接続されていません`));
 
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`${this.name}: ${method} が ${TIMEOUT / 1000} 秒で応答しません`));
+        reject(
+          new Error(
+            `${this.name}: ${method} が ${TIMEOUT / 1000} 秒で応答しません`,
+          ),
+        );
       }, TIMEOUT);
       this.pending.set(id, { resolve, reject, timer });
       this.send({ jsonrpc: "2.0", id, method, params: params ?? {} });

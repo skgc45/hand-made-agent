@@ -1,10 +1,12 @@
+import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   type CustomEvent,
   EventType,
   type Interrupt,
+  type ResumeEntry,
   type RunErrorEvent,
   type RunFinishedEvent,
-  type ResumeEntry,
   type RunStartedEvent,
   type StepFinishedEvent,
   type StepStartedEvent,
@@ -17,14 +19,12 @@ import {
   type ToolCallStartEvent,
 } from "@ag-ui/core";
 import OpenAI from "openai";
-import { randomUUID } from "node:crypto";
-import { setTimeout as sleep } from "node:timers/promises";
 import { render, summarize } from "./compact.js";
-import { type Fact, FactGraph, extractFacts } from "./graph.js";
+import { extractFacts, type Fact, FactGraph } from "./graph.js";
 import { type PromptSection, SystemPrompt } from "./prompt.js";
 import { MessageAccumulator } from "./stream.js";
-import { charCount, splitSafe, trimNaive, trimSafe } from "./trim.js";
 import type { Toolset } from "./toolset.js";
+import { charCount, splitSafe, trimNaive, trimSafe } from "./trim.js";
 
 export type AgentEvent =
   | RunStartedEvent
@@ -80,7 +80,8 @@ export type ToolResultContext = ToolCallContext & {
 
 /** 省略したフィールドは元の値を保つ。deep merge はしない（pi と同じ） */
 export type AfterToolCallResult =
-  { content?: string; terminate?: boolean } | undefined;
+  | { content?: string; terminate?: boolean }
+  | undefined;
 
 export type AfterToolCall = (
   context: ToolResultContext,
@@ -405,7 +406,7 @@ export class Agent {
 
       // 外側は「止まろうとしたときに follow-up があるか」、
       // 内側は「ツール呼び出しが続くか、割り込みが来ているか」。pi と同じ二重ループ
-      outer: while (true) {
+      while (true) {
         while ((hasMoreToolCalls || injected.length > 0) && !signal?.aborted) {
           for (const text of injected) {
             await this.pushMessage({ role: "user", content: text });
@@ -467,10 +468,10 @@ export class Agent {
           injected = await this.poll("getSteeringMessages");
         }
 
-        if (signal?.aborted) break outer;
+        if (signal?.aborted) break;
 
         const followUp = await this.poll("getFollowUpMessages");
-        if (followUp.length === 0) break outer;
+        if (followUp.length === 0) break;
         injected = followUp;
         hasMoreToolCalls = false;
       }
@@ -798,11 +799,11 @@ export class Agent {
       // リトライできるのは最初のチャンクが来る前だけ
       let emitted = false;
       try {
-        const result = yield* (this.config.stream === false
+        const result = yield* this.config.stream === false
           ? this.generateWhole(signal)
           : this.generateStream(signal, () => {
               emitted = true;
-            }));
+            });
         if (result.usage?.prompt_tokens) {
           this.charsPerToken = sentChars / result.usage.prompt_tokens;
         }

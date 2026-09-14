@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { type Rule, hits, parseRule, subjectsOf } from "../permission/index.js";
+import { hits, parseRule, type Rule, subjectsOf } from "../permission/index.js";
 
 export const HOOK_EVENTS = [
   "PreToolUse",

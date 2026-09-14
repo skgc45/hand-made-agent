@@ -1,5 +1,5 @@
-import { TELEMETRY, TELEMETRY_URL } from "../config.js";
 import type { AgentEvent } from "../agent/loop.js";
+import { TELEMETRY, TELEMETRY_URL } from "../config.js";
 import { ClickHouseTelemetry } from "./clickhouse.js";
 import { NoopTelemetry } from "./noop.js";
 

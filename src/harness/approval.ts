@@ -74,7 +74,8 @@ export function approvalHook(
       const payload = resume.payload as
         | { approved?: boolean; rule?: string; save?: boolean }
         | undefined;
-      const approved = resume.status === "resolved" && payload?.approved === true;
+      const approved =
+        resume.status === "resolved" && payload?.approved === true;
       if (approved && payload) await remember(permissions, payload, save);
       return approved ? undefined : { kind: "block", reason: DENIED };
     }
@@ -87,7 +88,12 @@ export function approvalHook(
     const suggestedRule = permissions.suggestRule(name, input);
 
     if (ask) {
-      const result = await ask({ name, arguments: args, suggestedRule, attempted });
+      const result = await ask({
+        name,
+        arguments: args,
+        suggestedRule,
+        attempted,
+      });
       if (result.approved) await remember(permissions, result, save);
       return result.approved ? undefined : { kind: "block", reason: DENIED };
     }

@@ -52,7 +52,8 @@ export class ClickHouseTelemetry implements Telemetry {
       body,
     });
     const text = await res.text();
-    if (!res.ok) throw new Error(`ClickHouse ${res.status}: ${text.slice(0, 300)}`);
+    if (!res.ok)
+      throw new Error(`ClickHouse ${res.status}: ${text.slice(0, 300)}`);
     return text;
   }
 

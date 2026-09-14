@@ -30,11 +30,15 @@ export class CliRenderer {
 
       case EventType.TOOL_CALL_ARGS:
         return {
-          text: dim(`  → ${this.toolNames.get(event.toolCallId)}(${event.delta})`),
+          text: dim(
+            `  → ${this.toolNames.get(event.toolCallId)}(${event.delta})`,
+          ),
         };
 
       case EventType.TOOL_CALL_RESULT:
-        return { text: dim(`  ← ${event.content.split("\n")[0].slice(0, 80)}`) };
+        return {
+          text: dim(`  ← ${event.content.split("\n")[0].slice(0, 80)}`),
+        };
 
       case EventType.CUSTOM:
         return this.custom(event.name, event.value as Record<string, unknown>);
@@ -80,13 +84,18 @@ export class CliRenderer {
       case "recovered": {
         const calls = v.calls as { tool: string; attempted: boolean }[];
         const body = calls
-          .map((c) => `${c.tool} は${c.attempted ? "走ったかもしれない" : "未実行"}`)
+          .map(
+            (c) =>
+              `${c.tool} は${c.attempted ? "走ったかもしれない" : "未実行"}`,
+          )
           .join(" / ");
         return { text: yellow(`  [前の run が落ちています — ${body}]`) };
       }
       case "reexec":
         return {
-          text: yellow(`  [${v.tool} を再実行します — 前回走ったかもしれません]`),
+          text: yellow(
+            `  [${v.tool} を再実行します — 前回走ったかもしれません]`,
+          ),
         };
       case "subagent": {
         const tag = v.job ? `${v.job} ${v.agent}` : `${v.agent}`;

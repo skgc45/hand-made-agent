@@ -70,7 +70,11 @@ export class StdioTransport implements Transport {
       if (edited === null) return { approved: false };
 
       const rule = edited.trim() || suggestedRule;
-      return { approved: true, rule, save: rule !== undefined && choice === "s" };
+      return {
+        approved: true,
+        rule,
+        save: rule !== undefined && choice === "s",
+      };
     }
     return { approved: choice === "y" || choice === "" };
   };

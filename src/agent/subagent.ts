@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventType } from "@ag-ui/core";
 import type OpenAI from "openai";
+import type { Profile } from "../profile/index.js";
 import {
   type AfterToolCall,
   Agent,
@@ -8,7 +9,6 @@ import {
   type BeforeToolCall,
 } from "./loop.js";
 import type { Toolset } from "./toolset.js";
-import type { Profile } from "../profile/index.js";
 
 const NO_APPROVAL =
   "サブエージェントの中では承認を求められません。この呼び出しは実行していません。親エージェントに結果を返し、必要なら親が自分で実行してください。";
@@ -106,7 +106,11 @@ function childGate(
 }
 
 /** 親の道具から、この子に渡すぶんだけを抜く。子は子を呼べない */
-function toolsFor(profile: Profile, def: SubagentDef, own: Set<string>): Toolset {
+function toolsFor(
+  profile: Profile,
+  def: SubagentDef,
+  own: Set<string>,
+): Toolset {
   const allowed = new Set(
     profile.toolset.tools
       .filter((tool) => tool.type === "function")
@@ -125,7 +129,9 @@ function toolsFor(profile: Profile, def: SubagentDef, own: Set<string>): Toolset
     execute: (name, input, signal) =>
       allowed.has(name)
         ? profile.toolset.execute(name, input, signal)
-        : Promise.resolve(`エラー: このサブエージェントは ${name} を使えません`),
+        : Promise.resolve(
+            `エラー: このサブエージェントは ${name} を使えません`,
+          ),
   };
 }
 

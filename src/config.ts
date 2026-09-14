@@ -4,9 +4,9 @@ import type { McpServerConfig } from "./mcp/index.js";
 import type { PermissionSet } from "./permission/index.js";
 import {
   type HookSource,
+  loadSettings,
   type RuleSource,
   type Settings,
-  loadSettings,
 } from "./settings/index.js";
 import { fingerprint, isTrusted, trustSubject } from "./settings/trust.js";
 
@@ -42,8 +42,7 @@ export const STREAM =
   process.env.STREAM !== undefined
     ? process.env.STREAM !== "0"
     : (settings.stream ?? true);
-export const TELEMETRY =
-  process.env.TELEMETRY ?? settings.telemetry ?? "none";
+export const TELEMETRY = process.env.TELEMETRY ?? settings.telemetry ?? "none";
 export const TELEMETRY_URL =
   process.env.TELEMETRY_URL ??
   settings.telemetryUrl ??
@@ -105,10 +104,9 @@ export function hooksFor(trusted: boolean): HookSet {
 export type ConfigRow = { name: string; value: string; source: string };
 
 /** 実効値がどこから来たかを、優先順位（フラグ > 環境変数 > ファイル > 既定）のまま説明する */
-export function describeConfig(overrides: {
-  workspace?: string;
-  profile?: string;
-} = {}): ConfigRow[] {
+export function describeConfig(
+  overrides: { workspace?: string; profile?: string } = {},
+): ConfigRow[] {
   const from = (env: string, key: keyof Settings): string =>
     process.env[env] !== undefined
       ? `環境変数 ${env}`
