@@ -6,7 +6,7 @@
   "prConcurrentLimit": 3,
   "platformAutomerge": true,
   "automergeSchedule": ["at any time"],
-  "automergeStrategy": "squash",
+  "automergeStrategy": "rebase",
   "packageRules": [
     {
       "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],

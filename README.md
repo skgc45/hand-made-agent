@@ -750,7 +750,7 @@ staged の差分が gitleaks で走査される。秘密情報が見つかれば
 脆弱性由来の更新だけは時間帯を問わず、`security` ラベル付きで来る。
 GitHub Actions はダイジェスト（SHA）で固定する。PR のタイトルは Conventional Commits。
 
-**minor / patch は CI が通れば自動で squash マージされる。** major は必ず人が見る。
+**minor / patch は CI が通れば自動でマージされる**（rebase。squash は禁止）。major は必ず人が見る。
 `main` はブランチ保護をかけてあり、`check` / `secrets` / `audit` / `codeql` / `deps` が
 通らないとマージできない。force push と削除も禁止。
 
