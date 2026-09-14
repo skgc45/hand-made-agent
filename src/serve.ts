@@ -28,7 +28,7 @@ import { HttpTransport } from "./transport/index.js";
 
 // 子は親と同じフックを通す。プロファイルとフックが互いに要るので、中身だけ後から差す
 const hooks: Hooks = {};
-const profile = withSubagents(createProfile(PROFILE, WORKSPACE), {
+const { profile, jobs } = withSubagents(createProfile(PROFILE, WORKSPACE), {
   client: createClient(),
   model: MODEL,
   contextLimit: CONTEXT_LIMIT,
@@ -58,6 +58,7 @@ const sessions = new Sessions({
   trim: TRIM,
   stream: STREAM,
   ...Object.assign(hooks, createHooks({ profile, trusted: !NEEDS_TRUST })),
+  jobs,
   store: createStore(),
   telemetry: createTelemetry(),
 });

@@ -89,18 +89,25 @@ export class CliRenderer {
           text: yellow(`  [${v.tool} を再実行します — 前回走ったかもしれません]`),
         };
       case "subagent": {
+        const tag = v.job ? `${v.job} ${v.agent}` : `${v.agent}`;
         if (v.event === "start")
-          return { text: dim(`  ┌ ${v.agent}: ${v.prompt}`) };
-        if (v.event === "tool") return { text: dim(`  │ ${v.tool}`) };
+          return { text: dim(`  ┌ ${tag}: ${v.prompt}`) };
+        if (v.event === "tool") return { text: dim(`  │ ${tag}: ${v.tool}`) };
+        if (v.event === "done")
+          return { text: yellow(`  ✓ ${v.job} の結果が届きました`) };
         return {
           text: dim(
-            `  └ ${v.agent}: ${v.steps} ターン / ツール ${v.tools}回 / 入力 ${v.promptTokens}${v.capped ? " — 上限で打ち切り" : ""}`,
+            `  └ ${tag}: ${v.steps} ターン / ツール ${v.tools}回 / 入力 ${v.promptTokens}${v.capped ? " — 上限で打ち切り" : ""}`,
           ),
         };
       }
       case "steering":
         return {
-          text: dim(`  [割り込み: ${(v.messages as string[]).join(" / ")}]`),
+          text: dim(
+            `  [割り込み: ${(v.messages as string[])
+              .map((m) => m.replace(/\s+/g, " ").slice(0, 100))
+              .join(" / ")}]`,
+          ),
         };
       default:
         return null;

@@ -408,6 +408,9 @@ export class Agent {
           const stepName = `turn-${step}`;
           yield { type: EventType.STEP_STARTED, stepName };
 
+          // background の子の出来事は、ツールを呼ばないターンでも引き取る
+          for (const event of this.config.toolset.drain?.() ?? []) yield event;
+
           yield* this.trimIfNeeded(signal);
 
           const { message, usage } = yield* this.generate(signal);

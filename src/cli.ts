@@ -108,7 +108,7 @@ if (opts.config) {
   }
 
   const ORDER = ["deny", "allow", "ask"] as const;
-  const current = withSubagents(
+  const { profile: current } = withSubagents(
     createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
     { ...subagentDeps(), hooks: {} },
   );
@@ -185,7 +185,7 @@ function subagentDeps() {
 
 // 子は親と同じフックを通す。プロファイルとフックが互いに要るので、中身だけ後から差す
 const hooks: Hooks = {};
-const profile = withSubagents(
+const { profile, jobs } = withSubagents(
   createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
   { ...subagentDeps(), hooks },
 );
@@ -222,6 +222,7 @@ const sessions = new Sessions({
   trim: TRIM,
   stream: STREAM,
   ...Object.assign(hooks, createHooks({ profile, ask: transport.approve, trusted })),
+  jobs,
   store,
   telemetry: createTelemetry(),
 });

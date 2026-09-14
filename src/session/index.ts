@@ -8,6 +8,7 @@ import {
   type BeforeUserMessage,
 } from "../agent/loop.js";
 import type { PromptSection } from "../agent/prompt.js";
+import type { JobQueue } from "../agent/subagent.js";
 import type { Profile } from "../profile/index.js";
 import { MessageQueue } from "./queue.js";
 import type { Store, ThreadSummary } from "../store/index.js";
@@ -26,6 +27,8 @@ export type SessionsConfig = {
   beforeUserMessage?: BeforeUserMessage;
   /** 止まろうとしたときに1 run に1回だけ呼ばれる */
   onStop?: () => Promise<string[]>;
+  /** background で走っているサブエージェント。完了は steering / follow-up に合流する */
+  jobs?: JobQueue;
   stream?: boolean;
   store: Store;
   telemetry?: Telemetry;
@@ -89,10 +92,16 @@ export class Sessions {
         beforeUserMessage,
         stream,
         append: (entry) => store.append(threadId, entry),
-        getSteeringMessages: async () => queues.steering.drain(),
+        // 終わっている子の報告は、ターンの合間に割り込みと同じ扱いで入れる
+        getSteeringMessages: async () => [
+          ...queues.steering.drain(),
+          ...(this.config.jobs?.poll() ?? []),
+        ],
         getFollowUpMessages: async () => {
           const queued = queues.followUp.drain();
           if (queued.length > 0) return queued;
+          // まだ走っている子がいるなら、止まる前に待って回収する
+          if (this.config.jobs?.running()) return await this.config.jobs.settle();
           if (!this.config.onStop || this.stopAsked.has(threadId)) return [];
           this.stopAsked.add(threadId);
           return await this.config.onStop();
@@ -150,6 +159,7 @@ export class Sessions {
   }
 
   async close(): Promise<void> {
+    await this.config.jobs?.stop();
     await this.config.telemetry?.close();
     await this.config.store.close();
   }
