@@ -128,9 +128,12 @@
       function askApproval(interrupt) {
         const box = document.createElement("div");
         box.className = "approval";
-        box.innerHTML = `<div>${interrupt.message}</div><code></code>`;
-        box.querySelector("code").textContent =
-          toolArgs.get(interrupt.toolCallId) ?? "";
+        // message にはツール名が入る。MCP のツール名はサーバが申告する外部由来の文字列
+        const title = document.createElement("div");
+        title.textContent = interrupt.message;
+        const args = document.createElement("code");
+        args.textContent = toolArgs.get(interrupt.toolCallId) ?? "";
+        box.append(title, args);
 
         const suggested = interrupt.metadata?.suggestedRule ?? "";
 
@@ -149,7 +152,9 @@
           const btn = document.createElement("button");
           btn.textContent = label;
           btn.onclick = () => {
-            box.querySelectorAll("button").forEach((b) => b.remove());
+            box.querySelectorAll("button").forEach((b) => {
+              b.remove();
+            });
             box.append(`→ ${label}`);
             // 新しい run を立てて再開する（AG-UI の resume）
             send("", [
