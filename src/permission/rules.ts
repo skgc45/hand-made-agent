@@ -4,7 +4,8 @@ export type Rule = { tool: string; pattern?: string };
 
 export type Subject = { kind: "command" | "path"; value: string };
 
-const RULE = /^([A-Za-z0-9_-]+)(?:\((.*)\))?$/s;
+/** 末尾 * はツール名の前方一致。MCP のようにツールが束で増えるとき、サーバ単位で書ける */
+const RULE = /^([A-Za-z0-9_-]+\*?)(?:\((.*)\))?$/s;
 
 export function parseRule(text: string): Rule {
   const matched = RULE.exec(text.trim());
@@ -61,12 +62,18 @@ function matchCommand(pattern: string, command: string): boolean {
   return rest === "" || /^\s/.test(rest);
 }
 
+function matchTool(pattern: string, name: string): boolean {
+  return pattern.endsWith("*")
+    ? name.startsWith(pattern.slice(0, -1))
+    : pattern === name;
+}
+
 export function hits(
   rule: Rule,
   name: string,
   subject: Subject | undefined,
 ): boolean {
-  if (rule.tool !== name) return false;
+  if (!matchTool(rule.tool, name)) return false;
   if (rule.pattern === undefined) return true;
   if (!subject) return false;
 

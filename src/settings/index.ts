@@ -8,6 +8,7 @@ import {
   type HookEvent,
   type HookSet,
 } from "../hooks/index.js";
+import type { McpServerConfig } from "../mcp/index.js";
 import { type PermissionSet, parseRule } from "../permission/index.js";
 
 export type Settings = {
@@ -26,9 +27,17 @@ export type Settings = {
   telemetryUrl?: string;
   permissions?: PermissionSet;
   hooks?: HookSet;
+  /** 起動する MCP サーバ。任意のコマンドなので、フックと同じく信頼の対象 */
+  mcpServers?: Record<string, McpServerConfig>;
 };
 
-type FieldKind = "string" | "number" | "boolean" | "permissions" | "hooks";
+type FieldKind =
+  | "string"
+  | "number"
+  | "boolean"
+  | "permissions"
+  | "hooks"
+  | "mcpServers";
 
 const FIELDS: Record<keyof Settings, FieldKind> = {
   model: "string",
@@ -46,6 +55,7 @@ const FIELDS: Record<keyof Settings, FieldKind> = {
   telemetryUrl: "string",
   permissions: "permissions",
   hooks: "hooks",
+  mcpServers: "mcpServers",
 };
 
 const USER = path.join(os.homedir(), ".hma", "settings.json");
@@ -196,6 +206,10 @@ function readSettings(file: string): Settings | undefined {
       settings.hooks = readHooks(file, value);
       continue;
     }
+    if (kind === "mcpServers") {
+      settings.mcpServers = readMcpServers(file, value);
+      continue;
+    }
     if (typeof value !== kind) {
       warn(file, `${key} は ${kind} である必要があります`);
       continue;
@@ -248,11 +262,20 @@ export type Loaded = {
   rules: RuleSource[];
   /** フックも同じ。どのファイルが刺したコマンドかを追えるようにする */
   hooks: HookSource[];
+  /** MCP サーバも、どのファイルが起動させるのかを追えるようにする */
+  mcp: McpSource[];
 };
 
 export type HookSource = {
   event: HookEvent;
   hook: HookConfig;
+  source: string;
+  layer: Layer;
+};
+
+export type McpSource = {
+  name: string;
+  config: McpServerConfig;
   source: string;
   layer: Layer;
 };
@@ -267,6 +290,7 @@ export function loadSettings(): Loaded {
   const sources: Partial<Record<keyof Settings, string>> = {};
   const rules: RuleSource[] = [];
   const hooks: HookSource[] = [];
+  const mcp: McpSource[] = [];
 
   const layers_: [string, Layer][] = [
     [USER, "user"],
@@ -295,6 +319,9 @@ export function loadSettings(): Loaded {
         hooks.push({ event, hook, source: name, layer });
       }
     }
+    for (const [server, config] of Object.entries(settings.mcpServers ?? {})) {
+      mcp.push({ name: server, config, source: name, layer });
+    }
   }
 
   return {
@@ -307,6 +334,8 @@ export function loadSettings(): Loaded {
     sources,
     rules,
     hooks,
+    // 同じ名前なら後の層が勝つ。フックと違って「増やす」ではなく「置き換える」
+    mcp: [...new Map(mcp.map((m) => [m.name, m])).values()],
   };
 }
 
@@ -329,4 +358,42 @@ export async function saveAllowRule(rule: string): Promise<string> {
   await mkdir(path.dirname(LOCAL), { recursive: true });
   await writeFile(LOCAL, `${JSON.stringify(next, null, 2)}\n`, "utf-8");
   return display(LOCAL);
+}
+
+/** MCP サーバの設定。command だけ必須で、args と env は任意 */
+function readMcpServers(
+  file: string,
+  value: unknown,
+): Record<string, McpServerConfig> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    warn(file, "mcpServers はオブジェクトである必要があります");
+    return undefined;
+  }
+
+  const servers: Record<string, McpServerConfig> = {};
+  for (const [name, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw !== "object" || raw === null) {
+      warn(file, `mcpServers.${name} はオブジェクトである必要があります`);
+      continue;
+    }
+    const entry = raw as Record<string, unknown>;
+    if (typeof entry.command !== "string") {
+      warn(file, `mcpServers.${name}.command が要ります`);
+      continue;
+    }
+    const args = Array.isArray(entry.args)
+      ? entry.args.filter((a): a is string => typeof a === "string")
+      : undefined;
+    const env =
+      typeof entry.env === "object" && entry.env !== null
+        ? Object.fromEntries(
+            Object.entries(entry.env as Record<string, unknown>)
+              .filter(([, v]) => typeof v === "string")
+              .map(([k, v]) => [k, v as string]),
+          )
+        : undefined;
+
+    servers[name] = { command: entry.command, args, env };
+  }
+  return servers;
 }

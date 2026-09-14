@@ -14,12 +14,14 @@ import {
   WORKSPACE,
   createClient,
   hooksFor,
+  mcpServersFor,
 } from "./config.js";
 import { collectContext } from "./context/index.js";
 import { type Hooks, createHooks } from "./harness/index.js";
 import { withSubagents } from "./agent/subagent.js";
 import { loadCommands } from "./commands/index.js";
 import { loadSkills, withSkills } from "./skills/index.js";
+import { connectMcp, withMcp } from "./mcp/index.js";
 import { describeTrust } from "./settings/trust.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
@@ -32,8 +34,9 @@ import { HttpTransport } from "./transport/index.js";
 const hooks: Hooks = {};
 const skills = await loadSkills();
 const commands = await loadCommands();
+const mcp = await connectMcp(mcpServersFor(!NEEDS_TRUST));
 const { profile, jobs } = withSubagents(
-  withSkills(createProfile(PROFILE, WORKSPACE), skills),
+  withMcp(withSkills(createProfile(PROFILE, WORKSPACE), skills), mcp),
   {
     client: createClient(),
     model: MODEL,
@@ -84,3 +87,4 @@ console.log(
 stopOnSignal(transport);
 await transport.start(sessions);
 await sessions.close();
+mcp.close();

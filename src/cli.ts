@@ -9,6 +9,7 @@ import {
   PROFILE,
   SETTINGS_FILES,
   SETTINGS_HOOKS,
+  SETTINGS_MCP,
   SETTINGS_RULES,
   STORE,
   STORE_PATH,
@@ -20,12 +21,19 @@ import {
   createClient,
   describeConfig,
   hooksFor,
+  mcpServersFor,
 } from "./config.js";
 import { collectContext } from "./context/index.js";
-import { type Hooks, createHooks, modeRules } from "./harness/index.js";
+import {
+  type Hooks,
+  createHooks,
+  mcpRules,
+  modeRules,
+} from "./harness/index.js";
 import { withSubagents } from "./agent/subagent.js";
 import { loadCommands } from "./commands/index.js";
 import { loadSkills, withSkills } from "./skills/index.js";
+import { connectMcp, withMcp } from "./mcp/index.js";
 import { describeTrust, recordTrust } from "./settings/trust.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
@@ -73,7 +81,11 @@ async function askTrust(): Promise<boolean> {
 }
 
 if (opts.trust) {
-  if (TRUST_SUBJECT.hooks.length === 0 && TRUST_SUBJECT.rules.length === 0) {
+  if (
+    TRUST_SUBJECT.hooks.length === 0 &&
+    TRUST_SUBJECT.rules.length === 0 &&
+    TRUST_SUBJECT.mcp.length === 0
+  ) {
     console.log("このディレクトリの .hma に、確認が要るものはありません。");
   } else if (!NEEDS_TRUST) {
     console.log("信頼済みです:");
@@ -112,10 +124,15 @@ if (opts.config) {
   const ORDER = ["deny", "allow", "ask"] as const;
   const skills = await loadSkills();
   const commands = await loadCommands();
+  // 実際に起動して tools/list を引く。繋がらないサーバはここで分かる
+  const mcp = await connectMcp(mcpServersFor(!NEEDS_TRUST));
   const { profile: current } = withSubagents(
-    withSkills(
-      createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
-      skills,
+    withMcp(
+      withSkills(
+        createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
+        skills,
+      ),
+      mcp,
     ),
     { ...subagentDeps(), hooks: {} },
   );
@@ -125,6 +142,14 @@ if (opts.config) {
         action,
         rule,
         source: `プロファイル ${current.name}`,
+        layer: undefined,
+      })),
+    ),
+    ...(["deny", "allow", "ask"] as const).flatMap((action) =>
+      (mcpRules(current)[action] ?? []).map((rule) => ({
+        action,
+        rule,
+        source: "MCP（readOnlyHint なし）",
         layer: undefined,
       })),
     ),
@@ -163,6 +188,20 @@ if (opts.config) {
       `  ${pad(event, eventWidth)}  ${pad(hook.matcher ?? "*", matcherWidth)}  ${hook.command}  \x1b[2m${source}${off ? " — 未信頼のため無効（hma trust）" : ""}\x1b[0m`,
     );
   }
+
+  console.log("\nMCP サーバ（設定ファイルから起動する外部プロセス）:");
+  if (SETTINGS_MCP.length === 0) console.log("  （なし）");
+  for (const { name, config, source, layer } of SETTINGS_MCP) {
+    const off = NEEDS_TRUST && layer !== "user";
+    const tools = mcp.listing.filter((t) => t.server === name);
+    const detail = off
+      ? "未信頼のため起動しない（hma trust）"
+      : `ツール ${tools.length}（read ${tools.filter((t) => t.readOnly).length}）`;
+    console.log(
+      `  ${name}  ${config.command} ${(config.args ?? []).join(" ")}  \x1b[2m${detail}  ${source}\x1b[0m`,
+    );
+  }
+  mcp.close();
 
   console.log("\nスキル（名前と説明だけが system に載る。本文は skill ツールで読む）:");
   if (skills.length === 0) console.log("  （なし）");
@@ -209,18 +248,6 @@ function subagentDeps() {
   };
 }
 
-// 子は親と同じフックを通す。プロファイルとフックが互いに要るので、中身だけ後から差す
-const hooks: Hooks = {};
-const skills = await loadSkills();
-const commands = await loadCommands();
-const { profile, jobs } = withSubagents(
-  withSkills(
-    createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
-    skills,
-  ),
-  { ...subagentDeps(), hooks },
-);
-
 const store = createStore();
 
 if (opts.list) {
@@ -236,6 +263,23 @@ if (opts.list) {
 const threadId = opts.new ? randomUUID() : (opts.thread ?? "cli");
 
 const trusted = NEEDS_TRUST ? await askTrust() : true;
+
+// MCP サーバは信頼を聞いたあとで起動する。未信頼のまま外部プロセスを立てない。
+// 子は親と同じフックを通すので、フックの中身だけ後から差す
+const hooks: Hooks = {};
+const skills = await loadSkills();
+const commands = await loadCommands();
+const mcp = await connectMcp(mcpServersFor(trusted));
+const { profile, jobs } = withSubagents(
+  withMcp(
+    withSkills(
+      createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
+      skills,
+    ),
+    mcp,
+  ),
+  { ...subagentDeps(), hooks },
+);
 
 const sections = await collectContext({
   workspace: profile.workspace,
@@ -273,3 +317,4 @@ console.log(
 stopOnSignal(transport);
 await transport.start(sessions);
 await sessions.close();
+mcp.close();

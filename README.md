@@ -1798,6 +1798,142 @@ export type BeforeUserMessageResult =
 - **コマンドの引数は `$ARGUMENTS` だけ。** `$1` `$2` は無い
 - **`/` の補完も一覧も無い**（`hma config` に出るだけ）
 
+## ステップ17 で理解すること — MCP はツールが外から生える。権限モデルがそのまま試される
+
+`.hma/settings.json` の `mcpServers` に書いたサーバを起動して、ツールを合流させる。
+クライアントは自前（`src/mcp/client.ts`、200行）。
+
+```json
+{
+  "mcpServers": {
+    "notes": { "command": "node", "args": ["examples/mcp-notes.js"] },
+    "fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem@latest", "./sandbox"]
+    }
+  }
+}
+```
+
+### プロトコルは「1行1 JSON-RPC」だけ
+
+stdio の MCP はフレーミングが改行だけで、`initialize` → `notifications/initialized` →
+`tools/list` → `tools/call` の4つで動く。踏んだのはこのあたり。
+
+- **`content` は種類つきの配列**で返る。履歴に積めるのは文字列なので畳む
+- **サーバは stderr にログを吐く。** stdout に混ぜると JSON-RPC が壊れる（実際、
+  filesystem サーバは起動メッセージを stderr に出す）
+- **起動に失敗したサーバは飛ばす。** 1つ落ちても他のサーバまで道連れにしない
+
+### ツール名に出所を入れる — 権限ルールが名前で効くから
+
+`mcp__<server>__<tool>`。[ステップ7](#ルールにする) でルールをツール名で書くと決めたので、
+名前が出所を持っていないとサーバ単位で禁止できない。そのために**ツール名の末尾 `*` を許した**。
+コマンドの `:*`（前方一致）と同じ発想で、表は増えていない。
+
+```
+$ hma config
+  deny   mcp__notes__*  ~/.../.hma/settings.local.json
+
+> メモを一覧して。
+  → mcp__notes__note_list({})
+  ← 権限ルールで禁止されています。このツールでは実行できません。
+```
+
+### `readOnlyHint` を `kinds` に写す
+
+MCP のツールは `annotations.readOnlyHint` を自己申告できる。**あれば read、無ければ execute。**
+[ステップ12](#readonly-を-kinds-にした) で決めた「種類の分からないツールは read 扱いしない」を
+そのまま当てる。
+
+```
+$ hma config
+MCP サーバ:
+  notes  node examples/mcp-notes.js                       ツール 2（read 1）
+  fs     npx -y @modelcontextprotocol/server-filesystem…   ツール 14（read 10）
+
+権限ルール:
+  ask    mcp__fs__write_file        MCP（readOnlyHint なし）
+  ask    mcp__fs__edit_file         MCP（readOnlyHint なし）
+  ask    mcp__fs__create_directory  MCP（readOnlyHint なし）
+  ask    mcp__fs__move_file         MCP（readOnlyHint なし）
+```
+
+公式の filesystem サーバは14ツール中10に `readOnlyHint` を付けていて、**残り4つだけが
+自動で `ask` になった**。
+
+これが要る理由は、最初の実装で踏んだから。権限の既定は「どれにも当たらなければ通す」なので、
+MCP を足した瞬間に**承認なしで書けるツールが増えていた**。
+
+```
+  → mcp__notes__note_write({"key":"今日","text":"MCP を実装した"})
+  ← 今日 を書きました                    ← 聞かれていない
+```
+
+`mcpRules()` を足したあと。
+
+```
+  mcp__notes__note_write を実行しようとしています:
+  ← ユーザーが実行を拒否しました。別の方法を検討してください。
+```
+
+**外から生えたツールは、プロファイルが知らない。** 知らないものを既定で通すか止めるかは、
+ツールが自分で増える仕組みを入れた瞬間に効いてくる。
+
+### 引数の表を増やさなかったのが、外のツールにも効いた
+
+[ステップ7](#ルールにする) で「引数のどこを見るかにツールごとの表は持たない。`command` が
+無ければ `path`」と決めた。MCP サーバは慣習的に `path` を使うので、**pattern がそのまま効く**。
+
+```
+deny: ["mcp__fs__read_text_file(**/*.md)"]
+
+  → mcp__fs__read_text_file({"path":".../sandbox/memo2.md"})
+  ← 権限ルールで禁止されています。
+```
+
+ただし `file_path` のような別名を使うサーバには効かない。**慣習に乗っているだけ**で保証ではない。
+
+### 実測: ツールが増えるぶんは毎ターン払う
+
+| | ツール定義 | ツールの JSON | 1ターンの ctx |
+|---|---|---|---|
+| MCP なし | 11 | 3,373 文字 | 1,793 |
+| + notes（2ツール） | 13 | 3,717 文字 | 1,881 |
+| + filesystem（14ツール） | 27 | 12,249 文字 | **3,591** |
+
+**filesystem サーバ1つで +1,710 トークン／ターン。** 20ターンの会話なら 34,000 トークンで、
+1回も使わなくても払う。[ステップ16](#ステップ16-で理解すること--スキルは毎ターン払うか使うときだけ払うかの交換) の
+結論がそのまま当てはまる。**MCP サーバを足すのは、`AGENTS.md` に全文を書くのと同じ形の支払い。**
+
+### 信頼の対象に足した
+
+`mcpServers` は任意のコマンドを起動する。[ステップ10](#ステップ10-で理解すること--フックがコードの中にあると誰も刺せない) の枠にそのまま入れた。
+
+```
+$ hma trust
+このディレクトリの .hma に、あなたの権限で動くものが入っています:
+  起動  MCP notes: node examples/mcp-notes.js  ← ~/.../settings.local.json
+```
+
+未信頼なら起動しない（`hma config` にも「未信頼のため起動しない」と出る）。
+**プロンプト（スキル・コマンド）は確認しないが、プロセスを立てるものは確認する。**
+線はステップ10 と同じで、緩める方向のものだけ聞く。
+
+### `workspace` の閉じ込めは MCP に効かない
+
+`resolveInRoot` は我々のツールの中の話でしかない。MCP サーバは自分のルールで動く
+（filesystem サーバは起動引数で閉じている）。**閉じ込めはサーバ側の責任**で、
+こちらから効かせられるのは権限ルールだけ。`mcpServers` に `/` を渡すサーバを書けば、
+`workspace` の外がそのまま見える。
+
+### まだやっていないこと
+
+- **tools だけ。** resources / prompts / sampling は実装していない
+- **stdio だけ。** HTTP transport は無い
+- **`tools/list_changed` を見ていない。** 起動時に1回引くだけ
+- **サーバの再起動が無い。** 落ちたらそのサーバのツールは全部エラーになる
+
 ## AG-UI はどこに位置するのか — エージェント関連プロトコルの地図
 
 AG-UI は「エージェント界隈のプロトコル一族」の一つで、層ごとに役割が分かれている。

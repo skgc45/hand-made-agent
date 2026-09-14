@@ -56,6 +56,18 @@ export function modeRules(profile: Profile, mode: string): PermissionSet {
   return {};
 }
 
+/**
+ * 外から生えたツールは、プロファイルが知らない。
+ * サーバが readOnlyHint を申告しなかったものは既定で聞く（allow を書けば外せる）
+ */
+export function mcpRules(profile: Profile): PermissionSet {
+  return {
+    ask: toolNames(profile).filter(
+      (name) => name.startsWith("mcp__") && profile.kinds[name] !== "read",
+    ),
+  };
+}
+
 /** ツール実行に挿すものを1箇所で束ねる。増えていくのはこの配列 */
 export function createHooks({
   profile,
@@ -66,6 +78,7 @@ export function createHooks({
   const permissions = createPermissions(
     mergePermissions(
       profile.permissions,
+      mcpRules(profile),
       permissionsFor(trusted),
       modeRules(profile, APPROVAL),
     ),

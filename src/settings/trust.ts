@@ -3,7 +3,12 @@ import fs from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { type HookSource, type RuleSource, loadSettings } from "./index.js";
+import {
+  type HookSource,
+  type McpSource,
+  type RuleSource,
+  loadSettings,
+} from "./index.js";
 
 const FILE = path.join(os.homedir(), ".hma", "trust.json");
 
@@ -15,10 +20,13 @@ const FILE = path.join(os.homedir(), ".hma", "trust.json");
 export function trustSubject(
   hooks: HookSource[],
   rules: RuleSource[],
-): { hooks: HookSource[]; rules: RuleSource[] } {
+  mcp: McpSource[] = [],
+): { hooks: HookSource[]; rules: RuleSource[]; mcp: McpSource[] } {
   return {
     hooks: hooks.filter((h) => h.layer !== "user"),
     rules: rules.filter((r) => r.layer !== "user" && r.action === "allow"),
+    // MCP サーバはフックと同じく、本人の権限で任意のコマンドを起動する
+    mcp: mcp.filter((m) => m.layer !== "user"),
   };
 }
 
@@ -31,6 +39,7 @@ export function fingerprint(subject: ReturnType<typeof trustSubject>): string {
       h.hook.timeout ?? 0,
     ]),
     subject.rules.map((r) => r.rule),
+    subject.mcp.map((m) => [m.name, m.config.command, ...(m.config.args ?? [])]),
   ]);
   return createHash("sha256").update(canonical).digest("hex");
 }
@@ -65,8 +74,8 @@ export async function recordTrust(print: string): Promise<void> {
  */
 export async function retrust(): Promise<void> {
   if (read()[projectKey()] === undefined) return;
-  const { hooks, rules } = loadSettings();
-  await recordTrust(fingerprint(trustSubject(hooks, rules)));
+  const { hooks, rules, mcp } = loadSettings();
+  await recordTrust(fingerprint(trustSubject(hooks, rules, mcp)));
 }
 
 /** 何を承認しようとしているのかを、そのまま並べる */
@@ -80,6 +89,10 @@ export function describeTrust(
     ),
     ...subject.rules.map(
       ({ rule, source }) => `  許可  ${rule}  ← ${source}`,
+    ),
+    ...subject.mcp.map(
+      ({ name, config, source }) =>
+        `  起動  MCP ${name}: ${config.command} ${(config.args ?? []).join(" ")}  ← ${source}`,
     ),
   ];
 }

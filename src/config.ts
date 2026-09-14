@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { HOOK_EVENTS, type HookSet } from "./hooks/index.js";
+import type { McpServerConfig } from "./mcp/index.js";
 import type { PermissionSet } from "./permission/index.js";
 import {
   type HookSource,
@@ -9,7 +10,7 @@ import {
 } from "./settings/index.js";
 import { fingerprint, isTrusted, trustSubject } from "./settings/trust.js";
 
-const { settings, files, sources, rules, hooks } = loadSettings();
+const { settings, files, sources, rules, hooks, mcp } = loadSettings();
 
 /** 実際に読めた設定ファイル。起動時のバナーに出す */
 export const SETTINGS_FILES = files;
@@ -56,10 +57,12 @@ export const STORE_PATH =
  * .hma の中身のうち「緩める方向」のものだけ、初回に本人の確認を取る。
  * clone しただけのリポジトリのフックが、黙って自分の権限で走らないようにする
  */
-export const TRUST_SUBJECT = trustSubject(hooks, rules);
+export const TRUST_SUBJECT = trustSubject(hooks, rules, mcp);
 export const TRUST_PRINT = fingerprint(TRUST_SUBJECT);
 export const NEEDS_TRUST =
-  (TRUST_SUBJECT.hooks.length > 0 || TRUST_SUBJECT.rules.length > 0) &&
+  (TRUST_SUBJECT.hooks.length > 0 ||
+    TRUST_SUBJECT.rules.length > 0 ||
+    TRUST_SUBJECT.mcp.length > 0) &&
   !isTrusted(TRUST_PRINT);
 
 /** 信頼していないときは、締める方向（deny / ask）だけ残す */
@@ -70,6 +73,21 @@ export function permissionsFor(trusted: boolean): PermissionSet {
     (set[action] ??= []).push(rule);
   }
   return set;
+}
+
+/** 設定ファイル由来の MCP サーバ（出所つき）。hma config が出す */
+export const SETTINGS_MCP = mcp;
+
+/** 信頼していないときは、本人の ~/.hma のサーバだけ起動する */
+export function mcpServersFor(
+  trusted: boolean,
+): Record<string, McpServerConfig> {
+  const servers: Record<string, McpServerConfig> = {};
+  for (const entry of mcp) {
+    if (!trusted && entry.layer !== "user") continue;
+    servers[entry.name] = entry.config;
+  }
+  return servers;
 }
 
 /** 信頼していないときは、本人の ~/.hma のフックだけ走らせる */
