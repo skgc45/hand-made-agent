@@ -4,7 +4,11 @@ sandbox/*
 # デモ用の練習プロジェクトだけ追跡する。エージェントの変更を git diff で見るため
 !sandbox/practice/
 .env
+.env.*
+!.env.example
 .threads/
 # 共有する .hma/settings.json だけ追跡する
 .hma/settings.local.json
 .playwright-mcp/
+.DS_Store
+*.log
