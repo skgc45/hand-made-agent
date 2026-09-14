@@ -1,0 +1,16 @@
+#!/bin/sh
+# 鍵をコミットしてしまう事故を手元で止める
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "gitleaks が入っていません。commit を中止しました。" >&2
+  echo "  macOS:  brew install gitleaks" >&2
+  echo "  Linux:  https://github.com/gitleaks/gitleaks/releases" >&2
+  echo "  Go:     go install github.com/zricethezav/gitleaks/v8@latest" >&2
+  exit 1
+fi
+
+if ! gitleaks git --staged --no-banner --redact; then
+  echo "" >&2
+  echo "秘密情報が含まれている可能性があります。commit を中止しました。" >&2
+  echo "誤検出なら --no-verify で通せます。" >&2
+  exit 1
+fi

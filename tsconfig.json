@@ -4,9 +4,14 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": [
+    "src",
+    "test"
+  ]
 }
