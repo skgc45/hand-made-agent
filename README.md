@@ -750,9 +750,12 @@ staged の差分が gitleaks で走査される。秘密情報が見つかれば
 脆弱性由来の更新だけは時間帯を問わず、`security` ラベル付きで来る。
 GitHub Actions はダイジェスト（SHA）で固定する。PR のタイトルは Conventional Commits。
 
-**minor / patch は CI が通れば自動でマージされる**（rebase。squash は禁止）。major は必ず人が見る。
-`main` はブランチ保護をかけてあり、`check` / `secrets` / `audit` / `codeql` / `deps` が
-通らないとマージできない。force push と削除も禁止。
+**minor / patch は CI が通れば自動でマージされる。** major は必ず人が見る。
+
+`main` へは直接 push できない（管理者も含む）。変更は必ず PR を通し、
+`check` / `secrets` / `audit` / `codeql` / `deps` が全部通ってからマージする。
+マージ方法は rebase のみ（squash とマージコミットは禁止）。force push とブランチ削除も禁止。
+レビューの承認は必須にしていない。必須にすると Renovate が自分の PR をマージできなくなるため。
 
 ---
 
