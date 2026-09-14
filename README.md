@@ -748,7 +748,7 @@ staged の差分が gitleaks で走査される。秘密情報が見つかれば
 
 依存の更新は [Renovate](https://docs.renovatebot.com/)（`renovate.json`）。毎週月曜の早朝にまとめて PR が立つ。
 脆弱性由来の更新だけは時間帯を問わず、`security` ラベル付きで来る。
-GitHub Actions はダイジェスト（SHA）で固定する。
+GitHub Actions はダイジェスト（SHA）で固定する。PR のタイトルは Conventional Commits。
 
 ---
 

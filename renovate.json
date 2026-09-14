@@ -2,32 +2,46 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended",
-    ":semanticCommitsDisabled",
     "helpers:pinGitHubActionDigests"
   ],
   "timezone": "Asia/Tokyo",
-  "schedule": ["* 0-6 * * 1"],
+  "schedule": [
+    "* 0-6 * * 1"
+  ],
   "prConcurrentLimit": 3,
   "packageRules": [
     {
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "groupName": "依存の更新（minor / patch）"
     },
     {
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "GitHub Actions"
     },
     {
-      "matchPackageNames": ["node"],
+      "matchPackageNames": [
+        "node"
+      ],
       "enabled": false
     }
   ],
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["* 0-6 * * 1"]
+    "schedule": [
+      "* 0-6 * * 1"
+    ]
   },
   "vulnerabilityAlerts": {
-    "labels": ["security"],
-    "schedule": ["at any time"]
+    "labels": [
+      "security"
+    ],
+    "schedule": [
+      "at any time"
+    ]
   }
 }
