@@ -224,6 +224,10 @@
               add("meta", `[${event.value.strategy}: ${event.value.removed}件削除 → ${event.value.kept}件]`);
             else if (event.name === "recovered")
               add("meta", `[前の run が落ちています — ${event.value.calls.map((c) => `${c.tool} は${c.attempted ? "走ったかもしれない" : "未実行"}`).join(" / ")}]`);
+            else if (event.name === "subagent")
+              add("meta", event.value.event === "end"
+                ? `[${event.value.agent}: ${event.value.steps} ターン / ツール ${event.value.tools}回 / 入力 ${event.value.promptTokens}]`
+                : `[${event.value.agent}] ${event.value.event === "tool" ? event.value.tool : event.value.prompt}`);
             else if (event.name === "reexec")
               add("meta", `[${event.value.tool} を再実行します — 前回走ったかもしれません]`);
             break;

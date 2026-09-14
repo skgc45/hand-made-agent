@@ -22,7 +22,8 @@ import {
   hooksFor,
 } from "./config.js";
 import { collectContext } from "./context/index.js";
-import { createHooks, modeRules } from "./harness/index.js";
+import { type Hooks, createHooks, modeRules } from "./harness/index.js";
+import { withSubagents } from "./agent/subagent.js";
 import { describeTrust, recordTrust } from "./settings/trust.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
@@ -107,9 +108,9 @@ if (opts.config) {
   }
 
   const ORDER = ["deny", "allow", "ask"] as const;
-  const current = createProfile(
-    opts.profile ?? PROFILE,
-    opts.workspace ?? WORKSPACE,
+  const current = withSubagents(
+    createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
+    { ...subagentDeps(), hooks: {} },
   );
   const rules = [
     ...ORDER.flatMap((action) =>
@@ -172,9 +173,21 @@ if (opts.config) {
   process.exit(0);
 }
 
-const profile = createProfile(
-  opts.profile ?? PROFILE,
-  opts.workspace ?? WORKSPACE,
+/** サブエージェントは親と同じモデル・同じ上限で回す */
+function subagentDeps() {
+  return {
+    client: createClient(),
+    model: MODEL,
+    contextLimit: CONTEXT_LIMIT,
+    trim: TRIM,
+  };
+}
+
+// 子は親と同じフックを通す。プロファイルとフックが互いに要るので、中身だけ後から差す
+const hooks: Hooks = {};
+const profile = withSubagents(
+  createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
+  { ...subagentDeps(), hooks },
 );
 
 const store = createStore();
@@ -208,7 +221,7 @@ const sessions = new Sessions({
   contextLimit: CONTEXT_LIMIT,
   trim: TRIM,
   stream: STREAM,
-  ...createHooks({ profile, ask: transport.approve, trusted }),
+  ...Object.assign(hooks, createHooks({ profile, ask: transport.approve, trusted })),
   store,
   telemetry: createTelemetry(),
 });

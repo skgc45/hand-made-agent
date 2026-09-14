@@ -610,6 +610,9 @@ export class Agent {
       }
       allTerminate &&= terminate;
 
+      // ツールの中で起きたことは、結果より先に出す
+      for (const event of this.config.toolset.drain?.() ?? []) yield event;
+
       yield* this.pushToolResult(call, result);
       await settle();
     }

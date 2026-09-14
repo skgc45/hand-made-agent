@@ -88,6 +88,16 @@ export class CliRenderer {
         return {
           text: yellow(`  [${v.tool} を再実行します — 前回走ったかもしれません]`),
         };
+      case "subagent": {
+        if (v.event === "start")
+          return { text: dim(`  ┌ ${v.agent}: ${v.prompt}`) };
+        if (v.event === "tool") return { text: dim(`  │ ${v.tool}`) };
+        return {
+          text: dim(
+            `  └ ${v.agent}: ${v.steps} ターン / ツール ${v.tools}回 / 入力 ${v.promptTokens}${v.capped ? " — 上限で打ち切り" : ""}`,
+          ),
+        };
+      }
       case "steering":
         return {
           text: dim(`  [割り込み: ${(v.messages as string[]).join(" / ")}]`),
