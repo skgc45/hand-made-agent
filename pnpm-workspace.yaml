@@ -1,0 +1,8 @@
+packages:
+  - web
+
+allowBuilds:
+  # tsx が使うネイティブバイナリを postinstall で展開する
+  esbuild: true
+  # 解析用テレメトリ。走らせる理由がない
+  '@scarf/scarf': false
