@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 import type OpenAI from "openai";
 import { Agent } from "../src/agent/loop.js";
 import type { Toolset } from "../src/agent/toolset.js";
+import { readBeforeEdit } from "../src/harness/files.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -150,5 +154,157 @@ describe("ツールの並列実行", () => {
       m.role === "tool" ? [m.content] : [],
     );
     assert.deepEqual(results, ["[blocked] だめ", "[ran] slow:b"]);
+  });
+});
+
+/** read_file / edit_file を実ファイルでやる最小の toolset。編集は read-modify-write */
+function fileToolset(root: string, log: string[]): Toolset {
+  return {
+    tools: [],
+    async execute(name, input) {
+      const {
+        path: rel,
+        from,
+        to,
+      } = input as {
+        path: string;
+        from?: string;
+        to?: string;
+      };
+      const file = path.join(root, rel);
+      if (name === "read_file") {
+        log.push(`read:${rel}`);
+        return await fs.readFile(file, "utf-8");
+      }
+      log.push(`edit:${rel}`);
+      const before = await fs.readFile(file, "utf-8");
+      // 読んでから書くまでの窓。直列化されていないと、ここで他方の書き込みを踏み潰す
+      await sleep(20);
+      await fs.writeFile(file, before.replace(String(from), String(to)));
+      return "ok";
+    },
+  };
+}
+
+async function workspace(content: string): Promise<string> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "hma-parallel-"));
+  await fs.writeFile(path.join(root, "a.txt"), content);
+  return root;
+}
+
+function guarded(root: string, client: OpenAI, toolset: Toolset): Agent {
+  const guard = readBeforeEdit(root);
+  return new Agent({
+    ...base(client, toolset),
+    beforeToolCall: guard.before,
+    afterToolCall: guard.after,
+  });
+}
+
+function toolResults(agent: Agent): string[] {
+  return agent.messages.flatMap((m) =>
+    m.role === "tool" ? [String(m.content)] : [],
+  );
+}
+
+describe("並列実行とファイルの書き換え", () => {
+  it("同じバッチの read_file → edit_file が通る", async () => {
+    const root = await workspace("hello\n");
+    const calls = [
+      toolCall("c1", "read_file", { path: "a.txt" }),
+      toolCall("c2", "edit_file", { path: "a.txt", from: "hello", to: "bye" }),
+    ];
+    const log: string[] = [];
+    const agent = guarded(root, fakeClient(calls), fileToolset(root, log));
+
+    await drain(agent, "go");
+
+    // 逐次なら通っていた組み合わせ。edit の判定が read の記録より先に走ると弾かれる
+    assert.deepEqual(toolResults(agent), ["hello\n", "ok"]);
+    assert.equal(await fs.readFile(path.join(root, "a.txt"), "utf-8"), "bye\n");
+  });
+
+  it("同じファイルへの edit_file 2件で、どちらの編集も消えない", async () => {
+    const root = await workspace("1\n2\n");
+    const calls = [
+      toolCall("c1", "read_file", { path: "a.txt" }),
+      toolCall("c2", "edit_file", { path: "a.txt", from: "1", to: "ONE" }),
+      toolCall("c3", "edit_file", { path: "a.txt", from: "2", to: "TWO" }),
+    ];
+    const log: string[] = [];
+    const agent = guarded(root, fakeClient(calls), fileToolset(root, log));
+
+    await drain(agent, "go");
+
+    // 重なると read-modify-write が踏み合って、片方が成功を返したまま消える
+    assert.equal(
+      await fs.readFile(path.join(root, "a.txt"), "utf-8"),
+      "ONE\nTWO\n",
+    );
+    assert.deepEqual(log, ["read:a.txt", "edit:a.txt", "edit:a.txt"]);
+  });
+});
+
+describe("並列実行のときの壊れた入力と復元", () => {
+  it("壊れた arguments が1件あっても、他のツールの結果は積まれる", async () => {
+    const calls = [
+      toolCall("c1", "slow", { id: "a", ms: 10 }),
+      {
+        id: "c2",
+        type: "function" as const,
+        function: { name: "slow", arguments: '{"id":"b",' },
+      },
+      toolCall("c3", "slow", { id: "c", ms: 10 }),
+    ];
+    const log: string[] = [];
+    const agent = new Agent(base(fakeClient(calls), slowToolset(log)));
+
+    await drain(agent, "go");
+
+    const results = toolResults(agent);
+    assert.equal(results.length, 3, "tool_calls と tool のペアが割れている");
+    assert.equal(results[0], "slow:a");
+    assert.match(results[1], /^エラー: 引数を JSON として読めません/);
+    assert.equal(results[2], "slow:c");
+  });
+
+  it("並列化より前の pending を復元しても、済んだツールを再実行しない", async () => {
+    const calls = [
+      toolCall("c1", "slow", { id: "a", ms: 10 }),
+      toolCall("c2", "slow", { id: "b", ms: 10 }),
+    ];
+    const log: string[] = [];
+    const agent = new Agent(base(fakeClient([]), slowToolset(log)));
+
+    // done を持たない、index だけの pending（並列化より前の形）
+    agent.replay([
+      {
+        kind: "message",
+        message: { role: "assistant", content: null, tool_calls: calls },
+      },
+      {
+        kind: "message",
+        message: { role: "tool", tool_call_id: "c1", content: "slow:a" },
+      },
+      {
+        kind: "pending",
+        pending: {
+          interruptId: "i1",
+          calls,
+          index: 1,
+          terminateSoFar: false,
+        },
+      },
+    ] as Parameters<Agent["replay"]>[0]);
+
+    for await (const _ of agent.run("", "r1", [
+      { interruptId: "i1", status: "resolved", payload: { approved: true } },
+    ] as Parameters<Agent["run"]>[2]));
+
+    assert.deepEqual(log, ["start:b", "end:b"], "c1 が再実行されている");
+    const ids = agent.messages.flatMap((m) =>
+      m.role === "tool" ? [m.tool_call_id] : [],
+    );
+    assert.deepEqual(ids, ["c1", "c2"], "tool_call_id が重複している");
   });
 });

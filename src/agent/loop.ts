@@ -50,6 +50,11 @@ export type ToolCallContext = {
   attempted?: boolean;
   /** 中断から再開したときだけ入る。payload をどう読むかはフックが決める */
   resume?: ResumeEntry;
+  /**
+   * 先に起動したツールが終わるまで待つ。並列だと後続の判定が先行の結果より先に走るので、
+   * 順序が要るフック（read-before-edit ガード）だけが呼ぶ
+   */
+  waitForRunning?: () => Promise<void>;
 };
 
 /**
@@ -154,6 +159,23 @@ type Pending = {
   terminateSoFar: boolean;
 };
 
+/** 並列化より前に書かれた pending は「何件目まで」しか持たない。id の集合に直す */
+function normalizePending(
+  pending: Pending | null | undefined,
+): Pending | undefined {
+  if (!pending) return undefined;
+  if (Array.isArray(pending.done)) return pending;
+
+  const index = (pending as { index?: unknown }).index;
+  return {
+    ...pending,
+    done:
+      typeof index === "number"
+        ? pending.calls.slice(0, index).map((call) => call.id)
+        : [],
+  };
+}
+
 type ToolBatchOutcome = { suspended: boolean; terminate: boolean };
 
 type GeneratedMessage = {
@@ -233,7 +255,7 @@ export class Agent {
           this.prompt.set(SUMMARY, this.summaryText);
           break;
         case "pending":
-          this.pending = entry.pending ?? undefined;
+          this.pending = normalizePending(entry.pending);
           break;
         case "fact":
           this.graph.apply(entry.facts);
@@ -566,6 +588,10 @@ export class Agent {
           messages: this.messages,
           attempted,
           resume: first ? resumed?.entry : undefined,
+          waitForRunning: async () => {
+            // 例外は下の Promise.all で投げ直す。ここでは終わるのを待つだけ
+            await Promise.allSettled([...running.values()]);
+          },
         },
         signal,
       );
@@ -600,7 +626,18 @@ export class Agent {
       if (decision?.kind === "block") {
         slot.result = decision.reason;
         slot.terminate = decision.terminate === true;
-        tasks.push(this.runTool(slot, name, args, true, signal));
+        tasks.push(this.runTool(slot, name, args, undefined, true, signal));
+        continue;
+      }
+
+      // 壊れた引数はここで結果にする。実行のほうで投げると、
+      // 同じバッチで動いている他のツールの結果まで積まれないまま run が終わる
+      let input: unknown;
+      try {
+        input = JSON.parse(args);
+      } catch (error) {
+        slot.result = `エラー: 引数を JSON として読めません: ${(error as Error).message}`;
+        tasks.push(this.runTool(slot, name, args, undefined, true, signal));
         continue;
       }
 
@@ -617,9 +654,11 @@ export class Agent {
 
       if (running.size >= PARALLEL_LIMIT) await Promise.race(running.values());
 
-      const task = this.runTool(slot, name, args, false, signal).finally(() => {
-        running.delete(call.id);
-      });
+      const task = this.runTool(slot, name, args, input, false, signal).finally(
+        () => {
+          running.delete(call.id);
+        },
+      );
       // 例外は下の Promise.all で投げ直す。ここで拾わないと、
       // preflight を回している間に unhandled rejection になってプロセスが落ちる
       task.catch(() => {});
@@ -682,31 +721,34 @@ export class Agent {
     },
     name: string,
     args: string,
+    input: unknown,
     blocked: boolean,
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    if (!blocked) {
-      slot.result = await this.config.toolset.execute(
-        name,
-        JSON.parse(args),
+    // 投げないこと。並列で1件でも投げると Promise.all が落ち、
+    // 実行し終わった他のツールの結果まで積まれないまま run が終わる
+    try {
+      if (!blocked) {
+        slot.result = await this.config.toolset.execute(name, input, signal);
+      }
+
+      const after = await this.config.afterToolCall?.(
+        {
+          toolCallId: slot.call.id,
+          name,
+          arguments: args,
+          messages: this.messages,
+          result: slot.result,
+          blocked,
+        },
         signal,
       );
-    }
-
-    const after = await this.config.afterToolCall?.(
-      {
-        toolCallId: slot.call.id,
-        name,
-        arguments: args,
-        messages: this.messages,
-        result: slot.result,
-        blocked,
-      },
-      signal,
-    );
-    if (after) {
-      slot.result = after.content ?? slot.result;
-      slot.terminate = after.terminate ?? slot.terminate;
+      if (after) {
+        slot.result = after.content ?? slot.result;
+        slot.terminate = after.terminate ?? slot.terminate;
+      }
+    } catch (error) {
+      slot.result = `エラー: ${(error as Error).message}`;
     }
   }
 

@@ -38,11 +38,16 @@ export function readBeforeEdit(workspace: string): {
   const resolve = (rel: string) => path.resolve(root, rel);
 
   return {
-    before: async ({ name, arguments: args }) => {
+    before: async ({ name, arguments: args, waitForRunning }) => {
       if (!WRITES.has(name)) return undefined;
 
       const rel = pathOf(args);
       if (!rel) return undefined;
+
+      // 並列だと、同じバッチで先に走った read_file の記録がまだ入っていない。
+      // 書き込む側だけ先行を待つ。待たないと「読んだのに読んでいない」と言われ、
+      // 同じファイルへの編集が2本同時に read-modify-write して片方が消える
+      await waitForRunning?.();
 
       const file = resolve(rel);
       const now = await mtime(file);
