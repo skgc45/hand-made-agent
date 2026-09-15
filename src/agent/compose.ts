@@ -1,7 +1,8 @@
-import type {
-  AfterToolCall,
-  BeforeToolCall,
-  BeforeUserMessage,
+import {
+  type AfterToolCall,
+  type BeforeToolCall,
+  type BeforeUserMessage,
+  messageOf,
 } from "./loop.js";
 
 /** 先に値を返したフックが勝つ。deny を先に置けば allow より優先される */
@@ -33,11 +34,18 @@ export function composeAfter(
     let touched = false;
 
     for (const hook of list) {
-      const result = await hook({ ...context, result: content }, signal);
-      if (!result) continue;
-      touched = true;
-      if (result.content !== undefined) content = result.content;
-      if (result.terminate !== undefined) terminate = result.terminate;
+      try {
+        const result = await hook({ ...context, result: content }, signal);
+        if (!result) continue;
+        touched = true;
+        if (result.content !== undefined) content = result.content;
+        if (result.terminate !== undefined) terminate = result.terminate;
+      } catch (error) {
+        // 1つのフックの失敗で、後ろのフックまで飛ばさない。
+        // 飛ばすと切り詰めが効かず、ツールの出力がそのまま履歴に入る
+        touched = true;
+        content = `${content}\n（afterToolCall が失敗しました: ${messageOf(error)}）`;
+      }
     }
 
     return touched ? { content, terminate } : undefined;

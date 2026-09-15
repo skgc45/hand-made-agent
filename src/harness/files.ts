@@ -34,17 +34,48 @@ export function readBeforeEdit(workspace: string): {
   const root = path.resolve(workspace);
   /** 読んだ時点の更新時刻。ファイルが無いときは undefined を覚える */
   const seen = new Map<string, number | undefined>();
+  /**
+   * そのファイルに触っているツールの id。読みと書きを分ける。
+   * 承認待ちで中断されると消えずに残るが、終わった id は待ちに効かないので害は無い
+   */
+  const active = new Map<string, { reads: Set<string>; writes: Set<string> }>();
+
+  const activeFor = (file: string) => {
+    let entry = active.get(file);
+    if (!entry) {
+      entry = { reads: new Set(), writes: new Set() };
+      active.set(file, entry);
+    }
+    return entry;
+  };
 
   const resolve = (rel: string) => path.resolve(root, rel);
 
   return {
-    before: async ({ name, arguments: args }) => {
-      if (!WRITES.has(name)) return undefined;
+    before: async ({ name, arguments: args, toolCallId, waitForRunning }) => {
+      if (!READS.has(name) && !WRITES.has(name)) return undefined;
 
       const rel = pathOf(args);
       if (!rel) return undefined;
 
       const file = resolve(rel);
+      const touching = activeFor(file);
+
+      // 書き換え中のファイルを読むと、読んだ中身と after で取る更新時刻がずれる。
+      // 古い中身を「最新を読んだ」と覚え、次の書き換えが先行を消してしまう
+      if (READS.has(name)) {
+        await waitForRunning?.([...touching.writes]);
+        touching.reads.add(toolCallId);
+        return undefined;
+      }
+
+      // 並列だと、同じバッチで先に走った read_file の記録がまだ入っていない。
+      // 待たないと「読んだのに読んでいない」と言われ、同じファイルへの編集が
+      // 2本同時に read-modify-write して片方が消える。
+      // 待つのは同じファイルに触っているぶんだけ。無関係なツールは重なったままでいい
+      await waitForRunning?.([...touching.reads, ...touching.writes]);
+      touching.writes.add(toolCallId);
+
       const now = await mtime(file);
 
       // 存在しないファイルへの write_file は新規作成。読みようがない
@@ -65,15 +96,20 @@ export function readBeforeEdit(workspace: string): {
       return undefined;
     },
 
-    after: async ({ name, arguments: args, blocked }) => {
-      if (blocked) return undefined;
+    after: async ({ name, arguments: args, toolCallId, blocked }) => {
       if (!READS.has(name) && !WRITES.has(name)) return undefined;
 
       const rel = pathOf(args);
       if (!rel) return undefined;
 
+      const file = resolve(rel);
+      const touching = activeFor(file);
+      touching.reads.delete(toolCallId);
+      touching.writes.delete(toolCallId);
+      if (blocked) return undefined;
+
       // 自分で書いたぶんは読んだことにする。でないと2回目の編集が通らない
-      seen.set(resolve(rel), await mtime(resolve(rel)));
+      seen.set(file, await mtime(file));
       return undefined;
     },
   };
