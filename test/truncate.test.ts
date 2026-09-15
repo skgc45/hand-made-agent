@@ -40,12 +40,31 @@ describe("ツール結果の切り詰め", () => {
     assert.match(out.content, /sed -n '2001,\$p'/);
   });
 
-  it("行が短くても、文字数の上限で切る", async () => {
+  it("文字数で切っても、案内する行番号は半端な行を指さない", async () => {
+    // 2500行 × 99文字。行数より先に文字数の上限に当たる
+    const body = Array.from({ length: 2500 }, () => "x".repeat(99)).join("\n");
+    const out = await truncateResult()(context("read_file", body));
+
+    assert.ok(out?.content);
+    const kept = out.content.split("\n").slice(0, -1);
+    // 半端な行を残すと、その行の残りがどうやっても読めなくなる
+    assert.ok(
+      kept.every((line) => line.length === 99),
+      "行の途中で切れている",
+    );
+    assert.match(out.content, new RegExp(`sed -n '${kept.length + 1},\\$p'`));
+    assert.match(out.content, new RegExp(`残り ${2500 - kept.length} 行`));
+  });
+
+  it("1行が長いファイルは、行ではなく文字で案内する", async () => {
     const out = await truncateResult()(
       context("read_file", "あ".repeat(90000)),
     );
 
     assert.ok(out?.content);
     assert.equal(out.content.split("\n")[0].length, 80000);
+    // 「残り 0 行」と言われても続きの読みようがない
+    assert.match(out.content, /残り 10000 文字/);
+    assert.match(out.content, /tail -c \+80001/);
   });
 });
