@@ -125,6 +125,9 @@ export type AgentConfig = {
   threadId?: string;
 };
 
+/** 同時に走らせるツールの数。無料枠の 5 RPM を並列で自分から踏みにいかない値 */
+const PARALLEL_LIMIT = 4;
+
 const ABORTED = "中断されました";
 const LOST_RUNNING =
   "実行の途中でプロセスが落ちたため、結果が残っていません。副作用が出たかどうかは外から分かりません（実行された可能性があります）。";
@@ -145,7 +148,8 @@ function isRetryable(error: unknown): boolean {
 type Pending = {
   interruptId: string;
   calls: OpenAI.ChatCompletionMessageFunctionToolCall[];
-  index: number;
+  /** 結果が積まれた tool_call の id。並列では「何件目まで」に意味が無い */
+  done: string[];
   /** 中断より前のツールが全部 terminate を立てていたか */
   terminateSoFar: boolean;
 };
@@ -257,8 +261,10 @@ export class Agent {
       this.messages.flatMap((m) => (m.role === "tool" ? [m.tool_call_id] : [])),
     );
     // 承認待ちの分はこれから実行するので、埋めると二重になる
+    const settled = new Set(this.pending?.done ?? []);
     const pendingIds = new Set(
-      this.pending?.calls.slice(this.pending.index).map((c) => c.id) ?? [],
+      this.pending?.calls.filter((c) => !settled.has(c.id)).map((c) => c.id) ??
+        [],
     );
 
     const next: OpenAI.ChatCompletionMessageParam[] = [];
@@ -348,13 +354,13 @@ export class Agent {
           (r) => r.interruptId === this.pending?.interruptId,
         );
 
-        const { calls, index, terminateSoFar } = this.pending;
+        const { calls, done, terminateSoFar } = this.pending;
         // メモリ上だけ先に消す。永続化はツール結果が積まれてから（executeCalls 内）
         this.pending = undefined;
 
         const outcome = yield* this.executeCalls(
           calls,
-          index,
+          new Set(done),
           { entry },
           runId,
           signal,
@@ -458,7 +464,7 @@ export class Agent {
 
           const outcome = yield* this.executeCalls(
             calls,
-            0,
+            new Set(),
             undefined,
             runId,
             signal,
@@ -499,12 +505,13 @@ export class Agent {
   }
 
   /**
+   * 承認と権限の判定（preflight）は逐次、実行だけ並列。
+   * 逐次にしないと承認プロンプトが同時に出て、どれに答えたのか誰にも分からなくなる。
    * terminate はバッチ全体のルール。**全部**のツールが立てたときだけ発動する（pi と同じ）。
-   * 中断をまたぐので、途中経過は pending に載せて往復させる。
    */
   private async *executeCalls(
     calls: OpenAI.ChatCompletionMessageFunctionToolCall[],
-    startIndex: number,
+    done: ReadonlySet<string>,
     resumed: { entry: ResumeEntry | undefined } | undefined,
     runId: string,
     signal: AbortSignal | undefined,
@@ -521,16 +528,30 @@ export class Agent {
       await this.record({ kind: "pending", pending: null });
     };
 
-    for (let i = startIndex; i < calls.length; i++) {
-      const call = calls[i];
+    type Slot = {
+      call: OpenAI.ChatCompletionMessageFunctionToolCall;
+      result: string;
+      terminate: boolean;
+    };
+    const slots: Slot[] = [];
+    const tasks: Promise<void>[] = [];
+    const running = new Map<string, Promise<void>>();
+    let suspend:
+      | {
+          call: OpenAI.ChatCompletionMessageFunctionToolCall;
+          interrupt: Omit<Interrupt, "id" | "toolCallId">;
+        }
+      | undefined;
+    let first = true;
+
+    for (const call of calls) {
+      if (done.has(call.id)) continue;
       const { name, arguments: args } = call.function;
 
       // 中断されても残りのツールに結果を積む。tool_calls と tool のペアを割らないため
       // （pi はここで break するが、我々の messages はそのまま API に渡るので 400 になる）
       if (signal?.aborted) {
-        yield* this.pushToolResult(call, ABORTED);
-        await settle();
-        allTerminate = false;
+        slots.push({ call, result: ABORTED, terminate: false });
         continue;
       }
 
@@ -544,10 +565,11 @@ export class Agent {
           arguments: args,
           messages: this.messages,
           attempted,
-          resume: i === startIndex ? resumed?.entry : undefined,
+          resume: first ? resumed?.entry : undefined,
         },
         signal,
       );
+      first = false;
 
       // 通したのか聞いたのか止めたのかは、ここでしか分からない。
       // 表示には出さないが、計測に残さないと承認の回数を数えられない
@@ -566,74 +588,84 @@ export class Agent {
         },
       };
 
+      // 承認待ちに入ったら、これ以上は起動しない。走っている分は下で待ち切る
       if (decision?.kind === "suspend") {
-        const interruptId = randomUUID();
-        this.pending = {
-          interruptId,
-          calls,
-          index: i,
-          terminateSoFar: allTerminate,
-        };
-        await this.record({ kind: "pending", pending: this.pending });
+        suspend = { call, interrupt: decision.interrupt };
+        break;
+      }
+
+      const slot: Slot = { call, result: "", terminate: false };
+      slots.push(slot);
+
+      if (decision?.kind === "block") {
+        slot.result = decision.reason;
+        slot.terminate = decision.terminate === true;
+        tasks.push(this.runTool(slot, name, args, true, signal));
+        continue;
+      }
+
+      if (attempted) {
         yield {
-          type: EventType.RUN_FINISHED,
-          threadId: this.threadId,
-          runId,
-          outcome: {
-            type: "interrupt",
-            interrupts: [
-              { id: interruptId, toolCallId: call.id, ...decision.interrupt },
-            ],
-          },
+          type: EventType.CUSTOM,
+          name: "reexec",
+          value: { tool: name, arguments: args },
         };
-        return { suspended: true, terminate: false };
       }
+      // 実行する前に印を残す。結果が積まれないまま落ちたら、
+      // 次の起動で「走ったかもしれない」と言える
+      await this.record({ kind: "attempt", toolCallId: call.id, name });
 
-      const blocked = decision?.kind === "block";
-      let result: string;
-      if (blocked) {
-        result = decision.reason;
-      } else {
-        if (attempted) {
-          yield {
-            type: EventType.CUSTOM,
-            name: "reexec",
-            value: { tool: name, arguments: args },
-          };
-        }
-        // 実行する前に印を残す。結果が積まれないまま落ちたら、
-        // 次の起動で「走ったかもしれない」と言える
-        await this.record({ kind: "attempt", toolCallId: call.id, name });
-        result = await this.config.toolset.execute(
-          name,
-          JSON.parse(args),
-          signal,
-        );
-      }
-      let terminate = blocked ? decision.terminate === true : false;
+      if (running.size >= PARALLEL_LIMIT) await Promise.race(running.values());
 
-      const after = await this.config.afterToolCall?.(
-        {
-          toolCallId: call.id,
-          name,
-          arguments: args,
-          messages: this.messages,
-          result,
-          blocked,
-        },
-        signal,
-      );
-      if (after) {
-        result = after.content ?? result;
-        terminate = after.terminate ?? terminate;
-      }
-      allTerminate &&= terminate;
+      const task = this.runTool(slot, name, args, false, signal).finally(() => {
+        running.delete(call.id);
+      });
+      // 例外は下の Promise.all で投げ直す。ここで拾わないと、
+      // preflight を回している間に unhandled rejection になってプロセスが落ちる
+      task.catch(() => {});
+      running.set(call.id, task);
+      tasks.push(task);
+    }
 
-      // ツールの中で起きたことは、結果より先に出す
-      for (const event of this.config.toolset.drain?.() ?? []) yield event;
+    await Promise.all(tasks);
 
-      yield* this.pushToolResult(call, result);
+    // ツールの中で起きたことは、結果より先に出す。
+    // 並列だと drain は共有の1本なので、どの結果に属するかは分からない
+    for (const event of this.config.toolset.drain?.() ?? []) yield event;
+
+    // イベントも履歴も tool_calls の順。完了順に積むと、同じログから同じ履歴が戻らない
+    for (const slot of slots) {
+      allTerminate &&= slot.terminate;
+      yield await this.appendToolResult(slot.call, slot.result);
       await settle();
+    }
+
+    if (suspend) {
+      const interruptId = randomUUID();
+      // index ではなく「結果が積まれた id」。並列では index に意味が無い
+      this.pending = {
+        interruptId,
+        calls,
+        done: [...done, ...slots.map((s) => s.call.id)],
+        terminateSoFar: allTerminate,
+      };
+      await this.record({ kind: "pending", pending: this.pending });
+      yield {
+        type: EventType.RUN_FINISHED,
+        threadId: this.threadId,
+        runId,
+        outcome: {
+          type: "interrupt",
+          interrupts: [
+            {
+              id: interruptId,
+              toolCallId: suspend.call.id,
+              ...suspend.interrupt,
+            },
+          ],
+        },
+      };
+      return { suspended: true, terminate: false };
     }
 
     return {
@@ -642,10 +674,46 @@ export class Agent {
     };
   }
 
-  private async *pushToolResult(
+  private async runTool(
+    slot: {
+      call: OpenAI.ChatCompletionMessageFunctionToolCall;
+      result: string;
+      terminate: boolean;
+    },
+    name: string,
+    args: string,
+    blocked: boolean,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    if (!blocked) {
+      slot.result = await this.config.toolset.execute(
+        name,
+        JSON.parse(args),
+        signal,
+      );
+    }
+
+    const after = await this.config.afterToolCall?.(
+      {
+        toolCallId: slot.call.id,
+        name,
+        arguments: args,
+        messages: this.messages,
+        result: slot.result,
+        blocked,
+      },
+      signal,
+    );
+    if (after) {
+      slot.result = after.content ?? slot.result;
+      slot.terminate = after.terminate ?? slot.terminate;
+    }
+  }
+
+  private async appendToolResult(
     call: OpenAI.ChatCompletionMessageFunctionToolCall,
     content: string,
-  ): AsyncGenerator<AgentEvent> {
+  ): Promise<AgentEvent> {
     // 先に積んでから通知する。逆にすると、間で落ちたとき結果が抜けた状態が残る
     await this.pushMessage({
       role: "tool",
@@ -653,7 +721,7 @@ export class Agent {
       content,
     });
     this.attempted.delete(call.id);
-    yield {
+    return {
       type: EventType.TOOL_CALL_RESULT,
       messageId: randomUUID(),
       toolCallId: call.id,
