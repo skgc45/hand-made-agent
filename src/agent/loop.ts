@@ -52,9 +52,11 @@ export type ToolCallContext = {
   resume?: ResumeEntry;
   /**
    * 先に起動したツールが終わるまで待つ。並列だと後続の判定が先行の結果より先に走るので、
-   * 順序が要るフック（read-before-edit ガード）だけが呼ぶ
+   * 順序が要るフック（read-before-edit ガード）だけが呼ぶ。
+   * id を渡せばそのぶんだけ待つ。何が衝突するかを知っているのはフックだけなので、
+   * ループは渡された id を引くだけにする
    */
-  waitForRunning?: () => Promise<void>;
+  waitForRunning?: (toolCallIds?: string[]) => Promise<void>;
 };
 
 /**
@@ -138,7 +140,7 @@ const ABORTED_RUNNING =
   "中断されました。このツールは実行中だったので、途中まで走ったかもしれません。";
 
 /** 投げられるのは Error とは限らない。message が無いものを undefined にしない */
-function messageOf(error: unknown): string {
+export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 const LOST_RUNNING =
@@ -610,21 +612,36 @@ export class Agent {
       const attempted = this.attempted.has(call.id);
       // 再開した1件だけ resume を添えて、同じフックにもう一度聞く。
       // ループは payload の中身を知らない
-      const decision = await this.config.beforeToolCall?.(
-        {
-          toolCallId: call.id,
-          name,
-          arguments: args,
-          messages: this.messages,
-          attempted,
-          resume: first ? resumed?.entry : undefined,
-          // 呼ばれた時点の running を固定する。自分はまだ入っていないので自分待ちにならない
-          waitForRunning: async () => {
-            await Promise.all([...running.values()]);
+      // フックが投げても、同じバッチで走っているツールの結果を捨てない。
+      // そのツールだけ止める（runTool と同じ立場）
+      let decision: BeforeToolCallResult;
+      try {
+        decision = await this.config.beforeToolCall?.(
+          {
+            toolCallId: call.id,
+            name,
+            arguments: args,
+            messages: this.messages,
+            attempted,
+            resume: first ? resumed?.entry : undefined,
+            // 呼ばれた時点の running を固定する。自分はまだ入っていないので自分待ちにならない。
+            // 終わった id は引けないので、フックが持ち越しても待ちは増えない
+            waitForRunning: async (ids) => {
+              await Promise.all(
+                ids
+                  ? ids.flatMap((id) => running.get(id) ?? [])
+                  : [...running.values()],
+              );
+            },
           },
-        },
-        signal,
-      );
+          signal,
+        );
+      } catch (error) {
+        decision = {
+          kind: "block",
+          reason: `エラー: beforeToolCall が失敗しました: ${messageOf(error)}`,
+        };
+      }
       first = false;
 
       // 通したのか聞いたのか止めたのかは、ここでしか分からない。
@@ -660,6 +677,14 @@ export class Agent {
         continue;
       }
 
+      if (running.size >= PARALLEL_LIMIT) await Promise.race(running.values());
+
+      // 空くのを待っている間に中断された。起動していないので未実行として積む
+      if (signal?.aborted) {
+        slot.result = ABORTED;
+        continue;
+      }
+
       if (attempted) {
         yield {
           type: EventType.CUSTOM,
@@ -670,8 +695,6 @@ export class Agent {
       // 実行する前に印を残す。結果が積まれないまま落ちたら、
       // 次の起動で「走ったかもしれない」と言える
       await this.record({ kind: "attempt", toolCallId: call.id, name });
-
-      if (running.size >= PARALLEL_LIMIT) await Promise.race(running.values());
 
       const task = this.runTool(slot, name, args, input, false, signal).finally(
         () => {

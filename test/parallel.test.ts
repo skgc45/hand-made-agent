@@ -4,9 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import type OpenAI from "openai";
+import { composeAfter } from "../src/agent/compose.js";
 import { Agent } from "../src/agent/loop.js";
 import type { Toolset } from "../src/agent/toolset.js";
-import { readBeforeEdit } from "../src/harness/files.js";
+import { readBeforeEdit, truncateResult } from "../src/harness/files.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -437,5 +438,143 @@ describe("並列実行と read の順序", () => {
       m.role === "tool" ? [m.tool_call_id] : [],
     );
     assert.deepEqual(ids, ["c1", "c2"]);
+  });
+});
+
+/** ファイル操作と、ファイルに触らない slow を混ぜた toolset */
+function mixedToolset(root: string, log: string[]): Toolset {
+  return {
+    tools: [],
+    async execute(name, input) {
+      const {
+        path: rel,
+        from,
+        to,
+        id,
+        ms,
+        text,
+      } = input as {
+        path?: string;
+        from?: string;
+        to?: string;
+        id?: string;
+        ms?: number;
+        text?: string;
+      };
+      if (name === "slow") {
+        log.push(`start:${id}`);
+        await sleep(Number(ms));
+        log.push(`end:${id}`);
+        return `slow:${id}`;
+      }
+      const file = path.join(root, String(rel));
+      if (name === "read_file") {
+        const body = await fs.readFile(file, "utf-8").catch(() => "(無い)");
+        log.push(`read:${body.replace(/\n/g, "")}`);
+        return body;
+      }
+      if (name === "write_file") {
+        await sleep(40);
+        await fs.writeFile(file, String(text));
+        log.push("wrote");
+        return "ok";
+      }
+      const before = await fs.readFile(file, "utf-8");
+      await sleep(20);
+      await fs.writeFile(file, before.replace(String(from), String(to)));
+      log.push("edited");
+      return "ok";
+    },
+  };
+}
+
+describe("並列実行で待つ範囲", () => {
+  it("同じファイルに触らないツールは、編集と重なったままでいい", async () => {
+    const root = await workspace("1\n2\n");
+    const calls = [
+      toolCall("c1", "read_file", { path: "a.txt" }),
+      toolCall("c2", "edit_file", { path: "a.txt", from: "1", to: "ONE" }),
+      toolCall("c3", "slow", { id: "x", ms: 200 }),
+      toolCall("c4", "read_file", { path: "a.txt" }),
+    ];
+    const log: string[] = [];
+    const agent = guarded(root, fakeClient(calls), mixedToolset(root, log));
+
+    await drain(agent, "go");
+
+    // c4 が待つのは同じファイルを書いている c2 だけ。無関係な c3 は待たない
+    assert.ok(
+      log.indexOf("read:ONE2") < log.indexOf("end:x"),
+      `無関係な slow を待ち切っている: ${log.join(" ")}`,
+    );
+  });
+
+  it("新規作成中のファイルも、書き終わってから読む", async () => {
+    const root = await workspace("dummy");
+    const calls = [
+      toolCall("c1", "write_file", { path: "new.txt", text: "できた" }),
+      toolCall("c2", "read_file", { path: "new.txt" }),
+    ];
+    const log: string[] = [];
+    const agent = guarded(root, fakeClient(calls), mixedToolset(root, log));
+
+    await drain(agent, "go");
+
+    // 待たないと read は ENOENT を返すのに、after は書き込み後の更新時刻を覚える。
+    // モデルが中身を見ていないまま、次の edit_file が通ってしまう
+    assert.deepEqual(log, ["wrote", "read:できた"]);
+  });
+});
+
+describe("並列実行とフックの失敗", () => {
+  it("afterToolCall が投げても、後ろのフックの切り詰めは効く", async () => {
+    const calls = [toolCall("c1", "big", { id: "a", ms: 0 })];
+    const agent = new Agent({
+      ...base(fakeClient(calls), {
+        tools: [],
+        async execute() {
+          return Array.from({ length: 500 }, (_, i) => `行 ${i}`).join("\n");
+        },
+      }),
+      // 実際の合成順と同じ。いちばん外側の外部フックが投げる
+      afterToolCall: composeAfter([
+        truncateResult(),
+        async () => {
+          throw new Error("PostToolUse のバグ");
+        },
+      ]),
+    });
+
+    await drain(agent, "go");
+
+    const [result] = toolResults(agent);
+    assert.match(result, /長すぎるので切りました/);
+    assert.ok(result.split("\n").length < 310, "切り詰めが効いていない");
+    assert.match(result, /afterToolCall が失敗しました: PostToolUse のバグ/);
+  });
+
+  it("beforeToolCall が投げても、走っているツールの結果は捨てない", async () => {
+    const calls = [
+      toolCall("c1", "slow", { id: "a", ms: 30 }),
+      toolCall("c2", "slow", { id: "b", ms: 10 }),
+    ];
+    const log: string[] = [];
+    const agent = new Agent({
+      ...base(fakeClient(calls), slowToolset(log)),
+      beforeToolCall: async (context) => {
+        if (context.toolCallId === "c2") throw new Error("PreToolUse のバグ");
+        return undefined;
+      },
+    });
+
+    await drain(agent, "go");
+
+    const results = toolResults(agent);
+    assert.equal(results.length, 2, "tool_calls と tool のペアが割れている");
+    assert.equal(results[0], "slow:a");
+    assert.match(
+      results[1],
+      /beforeToolCall が失敗しました: PreToolUse のバグ/,
+    );
   });
 });
