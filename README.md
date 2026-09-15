@@ -754,7 +754,7 @@ GitHub Actions はダイジェスト（SHA）で固定する。PR のタイト�
 
 `main` へは直接 push できない（管理者も含む）。変更は必ず PR を通し、
 `check` / `secrets` / `audit` / `codeql` / `deps` が全部通ってからマージする。
-マージ方法は rebase のみ（squash とマージコミットは禁止）。force push とブランチ削除も禁止。
+マージ方法はマージコミットのみ（squash と rebase は禁止）。force push とブランチ削除も禁止。
 レビューの承認は必須にしていない。必須にすると Renovate が自分の PR をマージできなくなるため。
 
 ---
