@@ -34,13 +34,18 @@ import {
 } from "./harness/index.js";
 import { connectMcp, withMcp } from "./mcp/index.js";
 import { createProfile } from "./profile/index.js";
+import { dim, yellow } from "./render/cli.js";
 import { Sessions } from "./session/index.js";
 import { describeTrust, recordTrust } from "./settings/trust.js";
 import { stopOnSignal } from "./shutdown.js";
 import { loadSkills, withSkills } from "./skills/index.js";
 import { createStore } from "./store/index.js";
 import { createTelemetry } from "./telemetry/index.js";
-import { StdioTransport } from "./transport/index.js";
+import {
+  PrintTransport,
+  StdioTransport,
+  type Transport,
+} from "./transport/index.js";
 
 const { values: opts } = parseArgs({
   options: {
@@ -51,8 +56,17 @@ const { values: opts } = parseArgs({
     workspace: { type: "string" },
     config: { type: "boolean" },
     trust: { type: "boolean" },
+    print: { type: "string", short: "p" },
   },
 });
+
+/** -p の値。`-` なら stdin をまとめて読む */
+async function promptOf(value: string): Promise<string> {
+  if (value !== "-" && value !== "") return value;
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf-8");
+}
 
 /** .hma には任意のコマンドが書ける。走らせる前に、何が走るのかを見せて聞く */
 async function askTrust(): Promise<boolean> {
@@ -273,9 +287,31 @@ if (opts.list) {
   process.exit(0);
 }
 
-const threadId = opts.new ? randomUUID() : (opts.thread ?? "cli");
+// -p は入力を待たない。スレッドを共有すると前回の続きになるので、既定は毎回新しい
+const printing = opts.print !== undefined;
+const prompt = printing ? await promptOf(opts.print as string) : "";
+if (printing && !prompt.trim()) {
+  console.error(
+    "-p にプロンプトがありません（`-p -` なら stdin から読みます）",
+  );
+  process.exit(2);
+}
 
-const trusted = NEEDS_TRUST ? await askTrust() : true;
+const threadId = opts.thread ?? (printing || opts.new ? randomUUID() : "cli");
+
+// 非対話では信頼を聞けない。緩める方向の設定は落としたまま進む
+const trusted = NEEDS_TRUST ? (printing ? false : await askTrust()) : true;
+// -p の stderr はパイプされる。端末でなければ色を付けない
+const paint = (f: (s: string) => string) =>
+  printing && process.stderr.isTTY !== true ? (s: string) => s : f;
+
+if (printing && NEEDS_TRUST) {
+  console.error(
+    paint(yellow)(
+      "未信頼の .hma があります。フック・allow・MCP は無効のまま進みます（hma trust）",
+    ),
+  );
+}
 
 // MCP サーバは信頼を聞いたあとで起動する。未信頼のまま外部プロセスを立てない。
 // 子は親と同じフックを通すので、フックの中身だけ後から差す
@@ -301,7 +337,9 @@ const sections = await collectContext({
   skills,
 });
 
-const transport = new StdioTransport(threadId);
+const transport: Transport = printing
+  ? new PrintTransport(threadId, prompt)
+  : new StdioTransport(threadId);
 const sessions = new Sessions({
   client: createClient(),
   model: MODEL,
@@ -320,14 +358,23 @@ const sessions = new Sessions({
 });
 
 const restored = (await sessions.get(threadId)).messages.length - 1;
-console.log(
-  `\x1b[2m${MODEL} / ${profile.name}:${profile.workspace} / ${STORE}:${STORE_PATH} / thread ${threadId}` +
-    (restored > 0 ? `（履歴 ${restored} 件を復元）` : "") +
-    (SETTINGS_FILES.length > 0 ? `\n設定: ${SETTINGS_FILES.join(" < ")}` : "") +
-    `\nCtrl+C で終了。作業対象は ${profile.workspace} です。\n\x1b[0m`,
+// 本文以外は stderr に寄せる。-p の stdout は答えだけにする
+const banner = printing ? console.error : console.log;
+banner(
+  paint(dim)(
+    `${MODEL} / ${profile.name}:${profile.workspace} / ${STORE}:${STORE_PATH} / thread ${threadId}` +
+      (restored > 0 ? `（履歴 ${restored} 件を復元）` : "") +
+      (SETTINGS_FILES.length > 0
+        ? `\n設定: ${SETTINGS_FILES.join(" < ")}`
+        : "") +
+      (printing ? "\n" : "\nCtrl+C で終了。") +
+      `作業対象は ${profile.workspace} です。\n`,
+  ),
 );
 
 stopOnSignal(transport);
 await transport.start(sessions);
 await sessions.close();
 mcp.close();
+
+if (transport instanceof PrintTransport) process.exitCode = transport.exitCode;

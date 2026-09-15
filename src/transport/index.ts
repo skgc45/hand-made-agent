@@ -21,4 +21,5 @@ export interface Transport {
 }
 
 export { HttpTransport } from "./http.js";
+export { PrintTransport } from "./print.js";
 export { StdioTransport } from "./stdio.js";
