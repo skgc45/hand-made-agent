@@ -41,8 +41,12 @@ export class PrintTransport implements Transport {
       }
 
       const out = renderer.render(event);
-      // 本文だけ stdout。進捗は stderr に分けて、呼び出し側が捨てられるようにする
-      if (out) this.write(out.raw ? out.text : `${out.text}\n`, !out.raw);
+      if (!out) continue;
+      // stderr 指定を先に見るのは stdio と同じ。本文（raw）だけ stdout に出し、
+      // 進捗は stderr に分けて、呼び出し側が捨てられるようにする
+      if (out.stderr) this.write(`${out.text}\n`, true);
+      else if (out.raw) this.write(out.text, false);
+      else this.write(`${out.text}\n`, true);
     }
   }
 

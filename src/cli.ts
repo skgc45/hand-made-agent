@@ -297,7 +297,9 @@ if (printing && !prompt.trim()) {
   process.exit(2);
 }
 
-const threadId = opts.thread ?? (printing || opts.new ? randomUUID() : "cli");
+const threadId = opts.new
+  ? randomUUID()
+  : (opts.thread ?? (printing ? randomUUID() : "cli"));
 
 // 非対話では信頼を聞けない。緩める方向の設定は落としたまま進む
 const trusted = NEEDS_TRUST ? (printing ? false : await askTrust()) : true;
