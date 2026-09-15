@@ -118,18 +118,31 @@ export function readBeforeEdit(workspace: string): {
 /** 1回のツール結果の上限。溢れると trim を誘発して、会話のほうが削られる */
 const MAX_LINES = 300;
 const MAX_CHARS = 15000;
+/**
+ * ファイルを読むときだけ広げる。bash の出力は grep で絞れるが、
+ * ソースは絞りようがない。300行だとこのリポジトリの loop.ts すら読み切れない
+ */
+const READ_MAX_LINES = 2000;
+const READ_MAX_CHARS = 80000;
 
 export function truncateResult(): AfterToolCall {
-  return async ({ result }) => {
+  return async ({ name, result }) => {
+    const reading = READS.has(name);
+    const maxLines = reading ? READ_MAX_LINES : MAX_LINES;
+    const maxChars = reading ? READ_MAX_CHARS : MAX_CHARS;
+
     const lines = result.split("\n");
-    if (lines.length <= MAX_LINES && result.length <= MAX_CHARS) {
+    if (lines.length <= maxLines && result.length <= maxChars) {
       return undefined;
     }
 
-    const kept = lines.slice(0, MAX_LINES).join("\n").slice(0, MAX_CHARS);
+    const kept = lines.slice(0, maxLines).join("\n").slice(0, maxChars);
     const dropped = lines.length - kept.split("\n").length;
+    const how = reading
+      ? `sed -n '${kept.split("\n").length + 1},$p' で続きを読めます`
+      : "grep や bash で絞ってください";
     return {
-      content: `${kept}\n（長すぎるので切りました。残り ${dropped} 行。grep や bash で絞ってください）`,
+      content: `${kept}\n（長すぎるので切りました。残り ${dropped} 行。${how}）`,
     };
   };
 }
