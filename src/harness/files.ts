@@ -34,19 +34,27 @@ export function readBeforeEdit(workspace: string): {
   const root = path.resolve(workspace);
   /** 読んだ時点の更新時刻。ファイルが無いときは undefined を覚える */
   const seen = new Map<string, number | undefined>();
+  /** いま書き換えている最中のファイル。並列で重なったときだけ中身が入る */
+  const writing = new Set<string>();
 
   const resolve = (rel: string) => path.resolve(root, rel);
 
   return {
     before: async ({ name, arguments: args, waitForRunning }) => {
-      if (!WRITES.has(name)) return undefined;
-
       const rel = pathOf(args);
       if (!rel) return undefined;
 
+      // 書き換え中のファイルを読むと、読んだ中身と after で取る更新時刻がずれる。
+      // 古い中身を「最新を読んだ」と覚え、次の書き換えが先行を消してしまう
+      if (READS.has(name)) {
+        if (writing.has(resolve(rel))) await waitForRunning?.();
+        return undefined;
+      }
+      if (!WRITES.has(name)) return undefined;
+
       // 並列だと、同じバッチで先に走った read_file の記録がまだ入っていない。
-      // 書き込む側だけ先行を待つ。待たないと「読んだのに読んでいない」と言われ、
-      // 同じファイルへの編集が2本同時に read-modify-write して片方が消える
+      // 待たないと「読んだのに読んでいない」と言われ、同じファイルへの編集が
+      // 2本同時に read-modify-write して片方が消える
       await waitForRunning?.();
 
       const file = resolve(rel);
@@ -67,16 +75,23 @@ export function readBeforeEdit(workspace: string): {
           reason: `${rel} は読んだあとに変わっています。read_file で読み直してください。`,
         };
       }
+
+      writing.add(file);
       return undefined;
     },
 
     after: async ({ name, arguments: args, blocked }) => {
-      if (blocked) return undefined;
       if (!READS.has(name) && !WRITES.has(name)) return undefined;
+      if (blocked) {
+        const rel = pathOf(args);
+        if (rel) writing.delete(resolve(rel));
+        return undefined;
+      }
 
       const rel = pathOf(args);
       if (!rel) return undefined;
 
+      writing.delete(resolve(rel));
       // 自分で書いたぶんは読んだことにする。でないと2回目の編集が通らない
       seen.set(resolve(rel), await mtime(resolve(rel)));
       return undefined;

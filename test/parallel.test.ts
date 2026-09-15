@@ -308,3 +308,134 @@ describe("並列実行のときの壊れた入力と復元", () => {
     assert.deepEqual(ids, ["c1", "c2"], "tool_call_id が重複している");
   });
 });
+
+/** 指定した id のときだけ投げる toolset */
+function flakyToolset(log: string[]): Toolset {
+  return {
+    tools: [],
+    async execute(name, input) {
+      const { id, ms, fail } = input as {
+        id: string;
+        ms: number;
+        fail?: boolean;
+      };
+      log.push(`start:${id}`);
+      await sleep(ms);
+      if (fail) throw new Error(`${id} が落ちた`);
+      log.push(`end:${id}`);
+      return `${name}:${id}`;
+    },
+  };
+}
+
+describe("並列実行のときの例外", () => {
+  it("ツールが投げても、同じバッチの他の結果は積まれる", async () => {
+    const calls = [
+      toolCall("c1", "flaky", { id: "a", ms: 10 }),
+      toolCall("c2", "flaky", { id: "b", ms: 5, fail: true }),
+      toolCall("c3", "flaky", { id: "c", ms: 10 }),
+    ];
+    const log: string[] = [];
+    const agent = new Agent(base(fakeClient(calls), flakyToolset(log)));
+
+    await drain(agent, "go");
+
+    const results = toolResults(agent);
+    assert.equal(results.length, 3, "tool_calls と tool のペアが割れている");
+    assert.equal(results[0], "flaky:a");
+    assert.equal(results[1], "エラー: b が落ちた");
+    assert.equal(results[2], "flaky:c");
+  });
+
+  it("afterToolCall が投げても、ツールの結果は捨てない", async () => {
+    const calls = [toolCall("c1", "slow", { id: "a", ms: 5 })];
+    const log: string[] = [];
+    const agent = new Agent({
+      ...base(fakeClient(calls), slowToolset(log)),
+      afterToolCall: async () => {
+        throw new Error("フックのバグ");
+      },
+    });
+
+    await drain(agent, "go");
+
+    // 副作用はもう出ている。「失敗した」とだけ伝えるとモデルがやり直す
+    const [result] = toolResults(agent);
+    assert.match(result, /^slow:a\n/);
+    assert.match(result, /afterToolCall が失敗しました: フックのバグ/);
+  });
+
+  it("Error でないものを投げても、メッセージが undefined にならない", async () => {
+    const calls = [toolCall("c1", "slow", { id: "a", ms: 5 })];
+    const agent = new Agent({
+      ...base(fakeClient(calls), {
+        tools: [],
+        async execute() {
+          throw "ただの文字列";
+        },
+      }),
+    });
+
+    await drain(agent, "go");
+
+    assert.deepEqual(toolResults(agent), ["エラー: ただの文字列"]);
+  });
+});
+
+describe("並列実行と read の順序", () => {
+  it("書き換え中のファイルは、書き終わってから読む", async () => {
+    const root = await workspace("1\n2\n");
+    const calls = [
+      toolCall("c1", "read_file", { path: "a.txt" }),
+      toolCall("c2", "edit_file", { path: "a.txt", from: "1", to: "ONE" }),
+      toolCall("c3", "read_file", { path: "a.txt" }),
+    ];
+    const log: string[] = [];
+    const agent = guarded(root, fakeClient(calls), fileToolset(root, log));
+
+    await drain(agent, "go");
+
+    // 重なると c3 は書き換え前の中身を返すのに、after は書き換え後の mtime を覚える。
+    // 次のターンの write_file がそれを「最新を読んだ」と見なして先行の編集を消す
+    assert.deepEqual(toolResults(agent), ["1\n2\n", "ok", "ONE\n2\n"]);
+  });
+
+  it("いまの形の pending を復元しても、済んだツールだけを飛ばす", async () => {
+    const calls = [
+      toolCall("c1", "slow", { id: "a", ms: 10 }),
+      toolCall("c2", "slow", { id: "b", ms: 10 }),
+    ];
+    const log: string[] = [];
+    const agent = new Agent(base(fakeClient([]), slowToolset(log)));
+
+    agent.replay([
+      {
+        kind: "message",
+        message: { role: "assistant", content: null, tool_calls: calls },
+      },
+      {
+        kind: "message",
+        message: { role: "tool", tool_call_id: "c1", content: "slow:a" },
+      },
+      {
+        kind: "pending",
+        pending: {
+          interruptId: "i1",
+          calls,
+          done: ["c1"],
+          terminateSoFar: false,
+        },
+      },
+    ] as Parameters<Agent["replay"]>[0]);
+
+    for await (const _ of agent.run("", "r1", [
+      { interruptId: "i1", status: "resolved", payload: { approved: true } },
+    ] as Parameters<Agent["run"]>[2]));
+
+    assert.deepEqual(log, ["start:b", "end:b"]);
+    const ids = agent.messages.flatMap((m) =>
+      m.role === "tool" ? [m.tool_call_id] : [],
+    );
+    assert.deepEqual(ids, ["c1", "c2"]);
+  });
+});
