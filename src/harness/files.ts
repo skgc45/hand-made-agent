@@ -3,6 +3,11 @@ import path from "node:path";
 import type { AfterToolCall, BeforeToolCall } from "../agent/loop.js";
 
 const READS = new Set(["read_file"]);
+/**
+ * 結果を切る上限を広げる対象。READS と中身は同じだが意図が違う
+ * （こちらは「ファイルの中身をそのまま返すので絞りようがない」もの）
+ */
+const FULL_READS = new Set(["read_file"]);
 const WRITES = new Set(["write_file", "edit_file"]);
 
 function pathOf(args: string): string | undefined {
@@ -118,18 +123,48 @@ export function readBeforeEdit(workspace: string): {
 /** 1回のツール結果の上限。溢れると trim を誘発して、会話のほうが削られる */
 const MAX_LINES = 300;
 const MAX_CHARS = 15000;
+/**
+ * ファイルを読むときだけ広げる。bash の出力は grep で絞れるが、
+ * ソースは絞りようがない。300行だとこのリポジトリの loop.ts すら読み切れない
+ */
+const READ_MAX_LINES = 2000;
+const READ_MAX_CHARS = 80000;
 
 export function truncateResult(): AfterToolCall {
-  return async ({ result }) => {
+  return async ({ name, result }) => {
+    const reading = FULL_READS.has(name);
+    const maxLines = reading ? READ_MAX_LINES : MAX_LINES;
+    const maxChars = reading ? READ_MAX_CHARS : MAX_CHARS;
+
     const lines = result.split("\n");
-    if (lines.length <= MAX_LINES && result.length <= MAX_CHARS) {
+    if (lines.length <= maxLines && result.length <= maxChars) {
       return undefined;
     }
 
-    const kept = lines.slice(0, MAX_LINES).join("\n").slice(0, MAX_CHARS);
+    const byLines = lines.slice(0, maxLines).join("\n");
+    let kept = byLines.slice(0, maxChars);
+    // 文字数で切ると行の途中で終わる。半端な行を残すと、案内する行番号が
+    // 1つ進みすぎて、その行の残りがどうやっても読めなくなる
+    const boundary = kept.lastIndexOf("\n");
+    if (byLines.length > maxChars && boundary >= 0) {
+      kept = kept.slice(0, boundary);
+    }
+
     const dropped = lines.length - kept.split("\n").length;
+    // 1行が長いファイル（minify された JS、1行の JSON）は行が増えない。
+    // 「残り 0 行」と言われても続きの読みようがないので、文字で案内する
+    const rest =
+      dropped > 0
+        ? `残り ${dropped} 行`
+        : `残り ${result.length - kept.length} 文字`;
+    const how = !reading
+      ? "grep や bash で絞ってください"
+      : dropped > 0
+        ? `sed -n '${kept.split("\n").length + 1},$p' で続きを読めます`
+        : `tail -c +${kept.length + 1} で続きを読めます`;
+
     return {
-      content: `${kept}\n（長すぎるので切りました。残り ${dropped} 行。grep や bash で絞ってください）`,
+      content: `${kept}\n（長すぎるので切りました。${rest}。${how}）`,
     };
   };
 }
