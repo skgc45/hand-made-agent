@@ -84,6 +84,7 @@ hma help
 |---|---|
 | `--thread <id>` | スレッドを指定（既定は `cli`） |
 | `--new` | 新しいスレッドを立てる |
+| `-p <prompt>` | 非対話。1回だけ答えて終わる（`-p -` で stdin から読む）。答えは stdout、進捗は stderr |
 | `--profile <name>` | `sandbox` / `coding` |
 | `--workspace <path>` | 触ってよいディレクトリ |
 
