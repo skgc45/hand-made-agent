@@ -4,7 +4,7 @@
   "license": "MIT",
   "repository": "github:skgc45/hand-made-agent",
   "type": "module",
-  "packageManager": "pnpm@12.4.1",
+  "packageManager": "pnpm@12.4.2",
   "engines": {
     "node": ">=24"
   },
