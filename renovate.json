@@ -4,6 +4,7 @@
   "timezone": "Asia/Tokyo",
   "schedule": ["* 0-6 * * 1"],
   "prConcurrentLimit": 3,
+  "minimumReleaseAge": "3 days",
   "platformAutomerge": true,
   "automergeSchedule": ["at any time"],
   "automergeStrategy": "merge",
