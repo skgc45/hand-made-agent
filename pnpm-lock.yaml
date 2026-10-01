@@ -170,8 +170,8 @@ importers:
         specifier: ^0.0.59
         version: 0.0.59
       '@ag-ui/encoder':
-        specifier: ^0.0.59
-        version: 0.0.59
+        specifier: ^1.0.0
+        version: 1.0.1(zod@3.25.76)
       openai:
         specifier: ^7.10.0
         version: 7.23.0(zod@3.25.76)
@@ -248,11 +248,25 @@ packages:
   '@ag-ui/core@0.0.59':
     resolution: {integrity: sha512-hDgy4ipTqXieT8YG8Mr917Y+FD/f11VK1GefZ5CwTDCuNqS/oTwjJ5l/DZkicThgS8hQW/Y7wPylPBMBJ8BkUg==}
 
+  '@ag-ui/core@1.0.1':
+    resolution: {integrity: sha512-Q6pxgI7gcey/0pHfM37S7GNrsYqTrrjjFLpi1dckHNGX2l9VTL0CjnyNc44lwPfHIzFmmEvQfbrAeEPINGGg/Q==}
+    peerDependencies:
+      zod: ^3.25.18 || ^4.0.0
+    peerDependenciesMeta:
+      zod:
+        optional: true
+
   '@ag-ui/encoder@0.0.59':
     resolution: {integrity: sha512-wQCzBsStyZMm8nzhTdTx1G0B1C8yv5rbzZLnz1ka/l5LcJEsK3KTounU8CR9l+7QtcpOUUDJKd0xAbyI6gNcSw==}
 
+  '@ag-ui/encoder@1.0.1':
+    resolution: {integrity: sha512-or0xYLdzGOuJg5avAtUxS1zNiMqO7MxUso+7z90Wl4jpl94QzfmfybXWopvPipVm/dh8IqkB/Zn+LHy4MI2e+g==}
+
   '@ag-ui/proto@0.0.59':
     resolution: {integrity: sha512-X+uvDaegLEHw5kJu8tv2eSqHH8ouat+JCfFokGV1uuMquY8qCEQSlGsM7xzexwX9fujuxgHOWumg5kJDqa0+RA==}
+
+  '@ag-ui/proto@1.0.1':
+    resolution: {integrity: sha512-w7R2gLeXv04Mss0B29thkF+nLitSx6aLeqhUpvmeJZNjBPbwZ6zkXdK3/KEqavCMtHvot7AGj6RaHG1DvbJwww==}
 
   '@antfu/install-pkg@2.0.1':
     resolution: {integrity: sha512-iCKVQcIC0e3oDxEfs3SHQGW+ovhBMZmS1TE+bTk50rVyMCBmCfClv7Qi3HQKlumYwvjb/iIMeWCW2i67q6kFfQ==}
@@ -3145,16 +3159,34 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
+  '@ag-ui/core@1.0.1(zod@3.25.76)':
+    optionalDependencies:
+      zod: 3.25.76
+
   '@ag-ui/encoder@0.0.59':
     dependencies:
       '@ag-ui/core': 0.0.59
       '@ag-ui/proto': 0.0.59
+
+  '@ag-ui/encoder@1.0.1(zod@3.25.76)':
+    dependencies:
+      '@ag-ui/core': 1.0.1(zod@3.25.76)
+      '@ag-ui/proto': 1.0.1
+    transitivePeerDependencies:
+      - zod
 
   '@ag-ui/proto@0.0.59':
     dependencies:
       '@ag-ui/core': 0.0.59
       '@bufbuild/protobuf': 2.15.0
       '@protobuf-ts/protoc': 2.11.1
+
+  '@ag-ui/proto@1.0.1':
+    dependencies:
+      '@ag-ui/core': 1.0.1(zod@3.25.76)
+      '@bufbuild/protobuf': 2.15.0
+      '@protobuf-ts/protoc': 2.11.1
+      zod: 3.25.76
 
   '@antfu/install-pkg@2.0.1':
     dependencies:
