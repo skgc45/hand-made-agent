@@ -108,7 +108,7 @@ export type BeforeUserMessage = (
 const TRIM_MODES = ["none", "naive", "safe", "compact", "graph"] as const;
 export type TrimMode = (typeof TRIM_MODES)[number];
 
-function parseTrimMode(value: string): TrimMode {
+export function parseTrimMode(value: string): TrimMode {
   if ((TRIM_MODES as readonly string[]).includes(value)) {
     return value as TrimMode;
   }

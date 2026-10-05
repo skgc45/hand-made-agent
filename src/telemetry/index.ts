@@ -1,5 +1,4 @@
 import type { AgentEvent } from "../agent/loop.js";
-import { TELEMETRY, TELEMETRY_URL } from "../config.js";
 import { ClickHouseTelemetry } from "./clickhouse.js";
 import { NoopTelemetry } from "./noop.js";
 
@@ -67,10 +66,7 @@ export function toRow(
   };
 }
 
-export function createTelemetry(
-  kind: string = TELEMETRY,
-  url: string = TELEMETRY_URL,
-): Telemetry {
+export function createTelemetry(kind: string, url: string): Telemetry {
   switch (kind) {
     case "clickhouse":
       return new ClickHouseTelemetry(url);

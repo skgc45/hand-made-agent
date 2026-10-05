@@ -14,6 +14,8 @@ import {
   SETTINGS_RULES,
   STORE,
   STORE_PATH,
+  TELEMETRY,
+  TELEMETRY_URL,
   TRUST_PRINT,
   TRUST_SUBJECT,
   WORKSPACE,
@@ -243,7 +245,7 @@ if (opts.config) {
   process.exit(0);
 }
 
-const store = createStore();
+const store = createStore(STORE, STORE_PATH);
 
 if (opts.list) {
   for (const t of await store.list()) {
@@ -292,7 +294,7 @@ const { sessions, profile } = await buildSessions(assets, {
   workspace: opts.workspace ?? WORKSPACE,
   ask: transport.approve,
   store,
-  telemetry: createTelemetry(),
+  telemetry: createTelemetry(TELEMETRY, TELEMETRY_URL),
 });
 
 const restored = (await sessions.get(threadId)).messages.length - 1;
