@@ -12,6 +12,7 @@
     "prepare": "git config core.hooksPath .githooks || true",
     "start": "node --env-file-if-exists=.env --import tsx src/cli.ts",
     "serve": "node --env-file-if-exists=.env --import tsx src/serve.ts",
+    "eval": "node --env-file-if-exists=.env --import tsx src/eval.ts",
     "test": "node --import tsx --test \"test/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",

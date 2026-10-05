@@ -1,0 +1,6 @@
+{
+  "prompt": "node --test を実行すると落ちるテストがあります。原因を調べて直してください。",
+  "profile": "coding",
+  "workspace": "sandbox/practice",
+  "expect": { "tools": ["bash", "edit_file"], "maxPromptTokens": 60000 }
+}
