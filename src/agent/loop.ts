@@ -165,11 +165,26 @@ const FACTS = "分かっている事実";
 /** ヒント（"retry in 12s"）があればそれに従い、無ければ倍々に待つ */
 function retryWait(error: unknown, attempt: number): number {
   const hint =
-    error instanceof OpenAI.APIError
-      ? /retry in ([\d.]+)s/.exec(error.message)
-      : null;
-  return hint ? Math.ceil(Number(hint[1])) + 1 : 5 * 2 ** attempt;
+    error instanceof OpenAI.APIError ? hintSeconds(error.message) : undefined;
+  return hint !== undefined ? Math.ceil(hint) + 1 : 5 * 2 ** attempt;
 }
+
+/** "retry in 12s" も "retry in 9h18m10.05s" も秒にする。読めなければ undefined */
+export function hintSeconds(message: string): number | undefined {
+  // "500ms" の "500m" を分と読まないよう、m の後ろに s が続くものは除く
+  const match =
+    /retry in (?:(\d+)h)?(?:(\d+)m(?!s))?(?:([\d.]+)s)?(?:([\d.]+)ms)?/.exec(
+      message,
+    );
+  if (!match || match.slice(1).every((part) => part === undefined)) {
+    return undefined;
+  }
+  const [h, m, sec, ms] = match.slice(1).map((part) => Number(part ?? 0));
+  return h * 3600 + m * 60 + sec + ms / 1000;
+}
+
+/** 日ごとの上限は何時間も先を指す。待っても run は戻らないので、すぐ失敗させる */
+const MAX_HINT_SECONDS = 120;
 
 /** 黙って寝るとハングと区別が付かない */
 function retryEvent(
@@ -193,7 +208,10 @@ function isRetryable(error: unknown): boolean {
   if (error instanceof OpenAI.APIUserAbortError) return false;
   if (error instanceof OpenAI.APIConnectionError) return true;
   if (error instanceof OpenAI.APIError) {
-    return error.status === 429 || (error.status ?? 0) >= 500;
+    if (error.status === 429) {
+      return (hintSeconds(error.message) ?? 0) <= MAX_HINT_SECONDS;
+    }
+    return (error.status ?? 0) >= 500;
   }
   return false;
 }
