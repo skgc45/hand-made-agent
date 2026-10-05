@@ -573,11 +573,13 @@ cd web && pnpm dev         # CopilotKit 版（http://localhost:5173、上のサ�
 > リモートコード実行になる。`HOST=0.0.0.0` で変えられるが、
 > **前段に認証を置かずにやらないこと。**
 
-ブラウザ経由で他サイトから叩かれないように、`POST /` は次を満たすときだけ通す。
+ブラウザ経由で他サイトから叩かれないように、`Origin` と `Host` の検査は
+すべてのリクエスト（`GET /` `GET /threads` を含む）に、
+`Content-Type` の検査は `POST /` にだけ掛ける。通すのは次を満たすとき。
 
 | 見るもの | 弾くもの |
 |---|---|
-| `Content-Type: application/json` | preflight を回避する単純リクエストでの CSRF |
+| `Content-Type: application/json`（POST のみ） | preflight を回避する単純リクエストでの CSRF |
 | `Origin` があればループバック由来のみ | 他サイトの JS からの CSRF |
 | `Host` がループバック（ループバックに待ち受けているときだけ） | DNS リバインディング |
 
