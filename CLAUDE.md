@@ -63,7 +63,7 @@ WORKSPACE=sandbox/practice APPROVAL=auto pnpm start
 主要な環境変数（README の表が正）: `GEMINI_API_KEY` / `LLM_MODEL` / `LLM_BASE_URL` / `PROFILE` /
 `WORKSPACE` / `APPROVAL`（`ask` `auto` `acceptEdits` `plan`）/ `TRIM`（`none` `naive` `safe` `compact` `graph`）/
 `CONTEXT_LIMIT` / `STORE` / `TELEMETRY` / `STREAM` / `PORT`。
-**Gemini 無料枠は 5 RPM。** 1問で5〜6回叩くのですぐ枯れる（`loop.ts` の `callModel()` に 429 リトライあり）。
+**Gemini 無料枠は 5 RPM、1日 500 回。** 1問で5〜6回叩くのですぐ枯れる（`loop.ts` の `generate()` に 429 リトライあり。日次上限はリトライしても戻らない）。
 
 ## 構成
 
@@ -72,7 +72,7 @@ WORKSPACE=sandbox/practice APPROVAL=auto pnpm start
 ```
 agent/     Agent。AG-UI イベントを yield するだけ。IO を一切知らない
   ↑
-session/   threadId ↔ Agent。store から復元し、run のたびに保存する
+session/   threadId ↔ Agent。store から復元し、保存は Agent の append に任せる
   ↑    ↑
 transport/ store/     stdio / http、sqlite / file / memory
 ```
