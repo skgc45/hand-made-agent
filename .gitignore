@@ -12,3 +12,5 @@ sandbox/*
 .playwright-mcp/
 .DS_Store
 *.log
+# 作業用の git worktree。中身は別ブランチの作業ツリー
+.claude/worktrees/
