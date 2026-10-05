@@ -82,13 +82,13 @@ transport/ store/     stdio / http、sqlite / file / memory
 
 ### 押さえるべき不変条件
 
-- **`src/agent/loop.ts` の `Agent.run()` が本体**（952行）。async generator で AG-UI イベントを yield する。
+- **`src/agent/loop.ts` の `Agent.run()` が本体。** async generator で AG-UI イベントを yield する。
   IO も承認も永続化も知らず、`beforeToolCall` / `afterToolCall` / `beforeUserMessage` / `append` という
   穴が開いているだけ。**機能を足すときは、まずこの既存の穴に乗せられないか探す**（`PLAN.md` の作法）
 - **承認の2モードは transport の制約そのもの。** `Transport.approve?` があれば（stdio）ループの中で `await`、
   無ければ（http）AG-UI の Interrupt で run を終える。Agent は「誰の都合か」を知らない
-- **保存は `Sessions#run()` の `finally`。** transport は保存を忘れられない。クライアントが切断して
-  generator が捨てられても保存される
+- **保存は Agent が `append` でそのつど追記する。** transport は保存を忘れられない。クライアントが切断して
+  generator が捨てられても、そこまでの分は残っている（ツールの実行前には attempt の印も残す）
 - **Profile はデコレータで積む。** `withSubagents(withMcp(withSkills(createProfile(...))))`。
   それぞれが `toolset` / `kinds` / `permissions` を足して新しい Profile を返す
 - **権限は `deny > allow > ask`、どれにも当たらなければ通す。** `APPROVAL` のモードは専用の判定を足さず、
