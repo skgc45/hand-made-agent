@@ -1,4 +1,4 @@
-import { EventType } from "@ag-ui/core";
+import { contentToText, EventType } from "@ag-ui/core";
 import type { AgentEvent } from "../agent/loop.js";
 
 export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -45,7 +45,9 @@ export class CliRenderer {
 
       case EventType.TOOL_CALL_RESULT:
         return {
-          text: this.dim(`  ← ${event.content.split("\n")[0].slice(0, 80)}`),
+          text: this.dim(
+            `  ← ${contentToText(event.content).split("\n")[0].slice(0, 80)}`,
+          ),
         };
 
       case EventType.CUSTOM:
