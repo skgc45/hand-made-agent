@@ -19,7 +19,7 @@ import {
   type ToolCallStartEvent,
 } from "@ag-ui/core";
 import OpenAI from "openai";
-import { render, summarize } from "./compact.js";
+import { summarize, transcriptChunks } from "./compact.js";
 import { extractFacts, type Fact, FactGraph } from "./graph.js";
 import { type PromptSection, SystemPrompt } from "./prompt.js";
 import { MessageAccumulator } from "./stream.js";
@@ -149,6 +149,33 @@ const LOST_BEFORE =
   "実行される前にプロセスが落ちました。このツールは実行されていません。";
 const SUMMARY = "これまでの経緯";
 const FACTS = "分かっている事実";
+
+/** ヒント（"retry in 12s"）があればそれに従い、無ければ倍々に待つ */
+function retryWait(error: unknown, attempt: number): number {
+  const hint =
+    error instanceof OpenAI.APIError
+      ? /retry in ([\d.]+)s/.exec(error.message)
+      : null;
+  return hint ? Math.ceil(Number(hint[1])) + 1 : 5 * 2 ** attempt;
+}
+
+/** 黙って寝るとハングと区別が付かない */
+function retryEvent(
+  error: unknown,
+  attempt: number,
+  wait: number,
+): CustomEvent {
+  return {
+    type: EventType.CUSTOM,
+    name: "retry",
+    value: {
+      attempt: attempt + 1,
+      waitSeconds: wait,
+      status: error instanceof OpenAI.APIError ? error.status : undefined,
+      message: messageOf(error).slice(0, 120),
+    },
+  };
+}
 
 function isRetryable(error: unknown): boolean {
   if (error instanceof OpenAI.APIUserAbortError) return false;
@@ -363,6 +390,28 @@ export class Agent {
     runId: string = randomUUID(),
     resume?: ResumeEntry[],
     signal?: AbortSignal,
+  ): AsyncGenerator<AgentEvent> {
+    let finished = false;
+    try {
+      yield* this.runInner(userInput, runId, resume, signal);
+      finished = true;
+    } finally {
+      // 受け取る側が途中で抜けると、yield で止まったまま結果の無い tool_calls が残る。
+      // 同じプロセスで次の run に進むと 400 になるので、落ちて復元したときと同じ規則で埋める
+      if (!finished) {
+        this.recover();
+        // 再開した run はメモリの承認待ちを先に消している。ログにも揃えないと、
+        // 別のプロセスで復元したとき承認待ちが戻り、埋めたはずの tool_calls が未回答のまま残る
+        await this.record({ kind: "pending", pending: this.pending ?? null });
+      }
+    }
+  }
+
+  private async *runInner(
+    userInput: string,
+    runId: string,
+    resume: ResumeEntry[] | undefined,
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<AgentEvent> {
     yield {
       type: EventType.RUN_STARTED,
@@ -855,13 +904,23 @@ export class Agent {
       const { kept, dropped } = splitSafe(this.messages, this.limitChars());
       if (dropped.length === 0) return;
 
-      const extracted = await extractFacts(
-        this.config.client,
-        this.config.model,
-        dropped,
-        render,
-        signal,
-      );
+      const extracted = {
+        facts: [] as Fact[],
+        unparsed: false,
+        promptTokens: 0,
+        completionTokens: 0,
+      };
+      for (const chunk of transcriptChunks(dropped)) {
+        const part = yield* this.withRetry(
+          () =>
+            extractFacts(this.config.client, this.config.model, chunk, signal),
+          signal,
+        );
+        extracted.facts.push(...part.facts);
+        extracted.unparsed ||= part.unparsed;
+        extracted.promptTokens += part.promptTokens;
+        extracted.completionTokens += part.completionTokens;
+      }
       this.totalPromptTokens += extracted.promptTokens;
       const { added, superseded } = this.graph.apply(extracted.facts);
 
@@ -893,14 +952,25 @@ export class Agent {
       const { kept, dropped } = splitSafe(this.messages, this.limitChars());
       if (dropped.length === 0) return;
 
-      const summary = await summarize(
-        this.config.client,
-        this.config.model,
-        this.summaryText,
-        dropped,
-        signal,
-      );
-      this.summaryText = summary.text;
+      const summary = { promptTokens: 0, completionTokens: 0 };
+      let text = this.summaryText;
+      for (const chunk of transcriptChunks(dropped)) {
+        const part = yield* this.withRetry(
+          () =>
+            summarize(
+              this.config.client,
+              this.config.model,
+              text,
+              chunk,
+              signal,
+            ),
+          signal,
+        );
+        text = part.text;
+        summary.promptTokens += part.promptTokens;
+        summary.completionTokens += part.completionTokens;
+      }
+      this.summaryText = text;
       this.totalPromptTokens += summary.promptTokens;
 
       this.replace(kept);
@@ -970,24 +1040,25 @@ export class Agent {
         return result;
       } catch (error) {
         if (emitted || attempt >= 5 || !isRetryable(error)) throw error;
+        const wait = retryWait(error, attempt);
+        yield retryEvent(error, attempt, wait);
+        await sleep(wait * 1000, undefined, { signal });
+      }
+    }
+  }
 
-        const hint =
-          error instanceof OpenAI.APIError
-            ? /retry in ([\d.]+)s/.exec(error.message)
-            : null;
-        const wait = hint ? Math.ceil(Number(hint[1])) + 1 : 5 * 2 ** attempt;
-
-        // 黙って寝るとハングと区別が付かない
-        yield {
-          type: EventType.CUSTOM,
-          name: "retry",
-          value: {
-            attempt: attempt + 1,
-            waitSeconds: wait,
-            status: error instanceof OpenAI.APIError ? error.status : undefined,
-            message: (error as Error).message.slice(0, 120),
-          },
-        };
+  /** 要約や事実の抽出も 429 を踏む。本体の生成と同じ待ち方でやり直す */
+  private async *withRetry<T>(
+    call: () => Promise<T>,
+    signal?: AbortSignal,
+  ): AsyncGenerator<AgentEvent, T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await call();
+      } catch (error) {
+        if (attempt >= 5 || !isRetryable(error)) throw error;
+        const wait = retryWait(error, attempt);
+        yield retryEvent(error, attempt, wait);
         await sleep(wait * 1000, undefined, { signal });
       }
     }

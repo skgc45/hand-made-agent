@@ -39,10 +39,12 @@ export function fingerprint(subject: ReturnType<typeof trustSubject>): string {
       h.hook.timeout ?? 0,
     ]),
     subject.rules.map((r) => r.rule),
+    // env も起動の中身。NODE_OPTIONS だけ書き換えても任意のコードが走る
     subject.mcp.map((m) => [
       m.name,
       m.config.command,
       ...(m.config.args ?? []),
+      Object.entries(m.config.env ?? {}).sort(([a], [b]) => a.localeCompare(b)),
     ]),
   ]);
   return createHash("sha256").update(canonical).digest("hex");
@@ -72,14 +74,22 @@ export async function recordTrust(print: string): Promise<void> {
   await writeFile(FILE, `${JSON.stringify(all, null, 2)}\n`, "utf-8");
 }
 
-/**
- * すでに信頼しているプロジェクトの内容が、本人の操作（[s]ave）で変わったとき追随する。
- * 指紋は書き換わっているので、ファイルを読み直して取り直す
- */
-export async function retrust(): Promise<void> {
-  if (read()[projectKey()] === undefined) return;
+function currentPrint(): string {
   const { hooks, rules, mcp } = loadSettings();
-  await recordTrust(fingerprint(trustSubject(hooks, rules, mcp)));
+  return fingerprint(trustSubject(hooks, rules, mcp));
+}
+
+/**
+ * 本人の [s]ave で指紋が変わったとき、信頼を追随させる。
+ * 保存の直前に信頼済みの中身と一致したときだけ。起動後にエージェントが .hma に書いたフックまで追認しない
+ */
+export async function saveTrusted(
+  save: () => Promise<string>,
+): Promise<string> {
+  const wasTrusted = isTrusted(currentPrint());
+  const file = await save();
+  if (wasTrusted) await recordTrust(currentPrint());
+  return file;
 }
 
 /** 何を承認しようとしているのかを、そのまま並べる */
@@ -94,7 +104,11 @@ export function describeTrust(
     ...subject.rules.map(({ rule, source }) => `  許可  ${rule}  ← ${source}`),
     ...subject.mcp.map(
       ({ name, config, source }) =>
-        `  起動  MCP ${name}: ${config.command} ${(config.args ?? []).join(" ")}  ← ${source}`,
+        `  起動  MCP ${name}: ${[
+          ...Object.entries(config.env ?? {}).map(([k, v]) => `${k}=${v}`),
+          config.command,
+          ...(config.args ?? []),
+        ].join(" ")}  ← ${source}`,
     ),
   ];
 }

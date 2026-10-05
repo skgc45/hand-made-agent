@@ -25,18 +25,46 @@ export type SummaryResult = {
   completionTokens: number;
 };
 
+const CHUNK_CHARS = 20000;
+
+/**
+ * 1回に渡すぶんずつ切る。先頭だけ渡して残りを捨てると、要約されないまま履歴から消える。
+ * 行の途中では切らない（1行が上限を超えるときだけ、その行を分ける）
+ */
+export function transcriptChunks(
+  dropped: OpenAI.ChatCompletionMessageParam[],
+  limit = CHUNK_CHARS,
+): string[] {
+  const lines = dropped.flatMap((m) => {
+    const line = `[${m.role}] ${render(m)}`;
+    const parts: string[] = [];
+    for (let i = 0; i < line.length; i += limit) {
+      parts.push(line.slice(i, i + limit));
+    }
+    return parts.length > 0 ? parts : [line];
+  });
+
+  const chunks: string[] = [];
+  let current = "";
+  for (const line of lines) {
+    if (current && current.length + 1 + line.length > limit) {
+      chunks.push(current);
+      current = line;
+    } else {
+      current = current ? `${current}\n${line}` : line;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
 export async function summarize(
   client: OpenAI,
   model: string,
   previous: string,
-  dropped: OpenAI.ChatCompletionMessageParam[],
+  transcript: string,
   signal?: AbortSignal,
 ): Promise<SummaryResult> {
-  const transcript = dropped
-    .map((m) => `[${m.role}] ${render(m)}`)
-    .join("\n")
-    .slice(0, 20000);
-
   const response = await client.chat.completions.create(
     {
       model,
