@@ -1,0 +1,8 @@
+{
+  "prompt": "transport/ にある3つの実装（stdio / http / print）の違いを、explore を background: true で起動して調べさせてください。その間に、あなたは permission/ にあるファイルの一覧を出してください。最後に両方をまとめて答えてください。ファイルは変更しないでください。",
+  "profile": "coding",
+  "workspace": "src",
+  "split": "test",
+  "check": "diff -r \"$HMA_EVAL_SOURCE\" .",
+  "expect": { "tools": ["explore"] }
+}

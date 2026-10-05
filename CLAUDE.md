@@ -21,8 +21,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   （`.claude/skills/sonnet-review`）、出た指摘は検証してから出す。**レビューが走っている間は PR を作らない。** 完了通知を受けて結果を出すまで待つ
 - 既に「入れないと決めた」ものがある（設定の再読み込み、`todo_write` の表示口など）。`PLAN.md` の穴の表を先に見ること
 
-`README.md` は使い方のドキュメント。**設計の経緯と実測は `docs/notes.md`**（ステップ1〜21 の「理解すること」）。
-次に何をやるかは `PLAN.md`（ステップ22: hillclimbing）。
+`README.md` は使い方のドキュメント。**設計の経緯と実測は `docs/notes.md`**（ステップ1〜22 の「理解すること」）。
+次に何をやるかは `PLAN.md`（ステップ23: 揺れの中で採否を決められる測り方）。
 
 ## コマンド
 

@@ -75,7 +75,7 @@ hma serve              # HTTP + SSE で起動（http://localhost:3000）
 hma list               # 保存されているスレッド一覧
 hma config             # いま効いている設定・権限・フック・スキルを出所つきで出す
 hma trust              # .hma のフックと allow を確認して信頼する
-hma eval [name...]     # .hma/evals/*.json を workspace の写しで流し、合否とトークンを表で出す（APPROVAL=auto、--repeat N）
+hma eval [name...]     # .hma/evals/*.json を workspace の写しで流し、合否とトークンを表で出す（APPROVAL=auto、--repeat N、--out / --compare）
 hma help
 ```
 
