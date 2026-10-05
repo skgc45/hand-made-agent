@@ -266,6 +266,11 @@ mcp__github__*            ← 末尾 * はツール名の前方一致。サー�
 **API キーは設定ファイルから読まない。** 共有される場所に鍵を書く習慣を作らないため、
 環境変数（`GEMINI_API_KEY` か `LLM_API_KEY`）だけを見る。
 
+**送り先と、承認を外す設定は `~/.hma` か環境変数でだけ効く。** `baseUrl` と `telemetryUrl` は
+API キーや会話の送り先になるので、`approval` の `auto` / `acceptEdits` は承認を外すので、
+`.hma/settings.json` と `.hma/settings.local.json` に書いても警告を出して無視する。
+`approval` の `ask` / `plan`（締める方向）はプロジェクトに書いても効く。
+
 ### 設定がどこから来たか見る
 
 ```bash

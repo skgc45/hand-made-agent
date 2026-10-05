@@ -10,7 +10,7 @@ import type { PermissionSet } from "../permission/index.js";
 import { createPermissions } from "../permission/index.js";
 import type { Profile } from "../profile/index.js";
 import { mergePermissions, saveAllowRule } from "../settings/index.js";
-import { retrust } from "../settings/trust.js";
+import { saveTrusted } from "../settings/trust.js";
 import { type AskFn, approvalHook } from "./approval.js";
 import {
   onStop,
@@ -94,11 +94,7 @@ export function createHooks({
 
   // 本人が [s]ave したぶんで指紋が変わる。信頼している間だけ追随させる
   const save = trusted
-    ? async (rule: string) => {
-        const file = await saveAllowRule(rule);
-        await retrust();
-        return file;
-      }
+    ? (rule: string) => saveTrusted(() => saveAllowRule(rule))
     : saveAllowRule;
 
   return {
