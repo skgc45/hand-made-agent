@@ -1,6 +1,6 @@
 import * as readline from "node:readline/promises";
 import type { AskFn } from "../harness/approval.js";
-import { CliRenderer, cyan, dim, yellow } from "../render/cli.js";
+import { CliRenderer, cyan, dim, emit, yellow } from "../render/cli.js";
 import type { Sessions } from "../session/index.js";
 import type { Transport } from "./index.js";
 
@@ -115,9 +115,11 @@ export class StdioTransport implements Transport {
         for await (const event of run) {
           const out = renderer.render(event);
           if (!out) continue;
-          if (out.stderr) console.error(out.text);
-          else if (out.raw) process.stdout.write(out.text);
-          else console.log(out.text);
+          emit(out, (text, channel) => {
+            if (channel === "error") console.error(text);
+            else if (channel === "raw") process.stdout.write(text);
+            else console.log(text);
+          });
         }
       } finally {
         this.rl.off("line", onLine);

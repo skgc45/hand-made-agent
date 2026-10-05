@@ -1,10 +1,6 @@
 import type { Entry } from "../agent/loop.js";
-import {
-  assertThreadId,
-  type Store,
-  summaryDelta,
-  type ThreadSummary,
-} from "./index.js";
+import { assertThreadId, type Store, type ThreadSummary } from "./index.js";
+import { summarize } from "./summary.js";
 
 /** 永続化しない実装。ステップ6 以前の挙動をそのまま再現する */
 export class MemoryStore implements Store {
@@ -27,22 +23,11 @@ export class MemoryStore implements Store {
 
   async list(): Promise<ThreadSummary[]> {
     return [...this.threads.entries()]
-      .map(([threadId, { entries, updatedAt }]) => {
-        let totalPromptTokens = 0;
-        let pending = false;
-        for (const entry of entries) {
-          const delta = summaryDelta(entry);
-          totalPromptTokens += delta.promptTokens;
-          if (delta.pending !== undefined) pending = delta.pending;
-        }
-        return {
-          threadId,
-          entries: entries.length,
-          totalPromptTokens,
-          pending,
-          updatedAt,
-        };
-      })
+      .map(([threadId, { entries, updatedAt }]) => ({
+        threadId,
+        ...summarize(entries),
+        updatedAt,
+      }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 

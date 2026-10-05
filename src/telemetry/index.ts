@@ -80,5 +80,3 @@ export function createTelemetry(
       throw new Error(`TELEMETRY に不明な値: ${kind}（clickhouse / none）`);
   }
 }
-
-export { ClickHouseTelemetry, NoopTelemetry };

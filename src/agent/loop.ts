@@ -105,6 +105,18 @@ export type BeforeUserMessage = (
   signal?: AbortSignal,
 ) => Promise<BeforeUserMessageResult>;
 
+const TRIM_MODES = ["none", "naive", "safe", "compact", "graph"] as const;
+export type TrimMode = (typeof TRIM_MODES)[number];
+
+function parseTrimMode(value: string): TrimMode {
+  if ((TRIM_MODES as readonly string[]).includes(value)) {
+    return value as TrimMode;
+  }
+  throw new Error(
+    `trim に未知の値 "${value}" が渡されました（${TRIM_MODES.join(" / ")} のどれか）`,
+  );
+}
+
 export type AgentConfig = {
   client: OpenAI;
   model: string;
@@ -214,6 +226,40 @@ function normalizePending(
   };
 }
 
+type Slot = {
+  call: OpenAI.ChatCompletionMessageFunctionToolCall;
+  result: string;
+  terminate: boolean;
+};
+
+type ExecuteOptions = {
+  /** 承認待ちから再開したバッチ。entry は再開した1件に添える resume */
+  resumed?: { entry: ResumeEntry | undefined };
+  /** 中断より前のツールが全部 terminate を立てていたか */
+  terminateSoFar?: boolean;
+};
+
+function gateDecision(decision: BeforeToolCallResult): "ask" | "block" | "run" {
+  if (decision?.kind === "suspend") return "ask";
+  if (decision?.kind === "block") return "block";
+  return "run";
+}
+
+function gateEvent(
+  decision: "ask" | "block" | "run",
+  call: OpenAI.ChatCompletionMessageFunctionToolCall,
+): CustomEvent {
+  return {
+    type: EventType.CUSTOM,
+    name: "gate",
+    value: {
+      decision,
+      tool: call.function.name,
+      arguments: call.function.arguments,
+    },
+  };
+}
+
 type ToolBatchOutcome = { suspended: boolean; terminate: boolean };
 
 type GeneratedMessage = {
@@ -260,7 +306,10 @@ export class Agent {
   private readonly toolsChars: number;
   private readonly prompt: SystemPrompt;
 
+  private readonly trim: TrimMode;
+
   constructor(private readonly config: AgentConfig) {
+    this.trim = parseTrimMode(config.trim);
     this.toolsChars = JSON.stringify(config.toolset.tools).length;
     this.threadId = config.threadId ?? randomUUID();
     this.prompt = new SystemPrompt(config.system);
@@ -443,10 +492,9 @@ export class Agent {
         const outcome = yield* this.executeCalls(
           calls,
           new Set(done),
-          { entry },
           runId,
           signal,
-          terminateSoFar,
+          { resumed: { entry }, terminateSoFar },
         );
         if (outcome.suspended) return;
         stopped = outcome.terminate;
@@ -547,7 +595,6 @@ export class Agent {
           const outcome = yield* this.executeCalls(
             calls,
             new Set(),
-            undefined,
             runId,
             signal,
           );
@@ -574,7 +621,7 @@ export class Agent {
       if (!signal?.aborted) {
         yield {
           type: EventType.RUN_ERROR,
-          message: (error as Error).message,
+          message: messageOf(error),
         };
         return;
       }
@@ -594,10 +641,9 @@ export class Agent {
   private async *executeCalls(
     calls: OpenAI.ChatCompletionMessageFunctionToolCall[],
     done: ReadonlySet<string>,
-    resumed: { entry: ResumeEntry | undefined } | undefined,
     runId: string,
     signal: AbortSignal | undefined,
-    terminateSoFar = true,
+    { resumed, terminateSoFar = true }: ExecuteOptions = {},
   ): AsyncGenerator<AgentEvent, ToolBatchOutcome> {
     let allTerminate = terminateSoFar;
     // 再開したバッチは、最初の結果が積まれた時点で承認待ちを解除する。
@@ -610,11 +656,6 @@ export class Agent {
       await this.record({ kind: "pending", pending: null });
     };
 
-    type Slot = {
-      call: OpenAI.ChatCompletionMessageFunctionToolCall;
-      result: string;
-      terminate: boolean;
-    };
     const slots: Slot[] = [];
     const tasks: Promise<void>[] = [];
     const running = new Map<string, Promise<void>>();
@@ -649,12 +690,8 @@ export class Agent {
           terminate: false,
         };
         slots.push(slot);
-        yield {
-          type: EventType.CUSTOM,
-          name: "gate",
-          value: { decision: "block", tool: name, arguments: args },
-        };
-        tasks.push(this.runTool(slot, name, args, undefined, true, signal));
+        yield gateEvent("block", call);
+        tasks.push(this.runTool(slot, undefined, true, signal));
         continue;
       }
 
@@ -695,20 +732,7 @@ export class Agent {
 
       // 通したのか聞いたのか止めたのかは、ここでしか分からない。
       // 表示には出さないが、計測に残さないと承認の回数を数えられない
-      yield {
-        type: EventType.CUSTOM,
-        name: "gate",
-        value: {
-          decision:
-            decision?.kind === "suspend"
-              ? "ask"
-              : decision?.kind === "block"
-                ? "block"
-                : "run",
-          tool: name,
-          arguments: args,
-        },
-      };
+      yield gateEvent(gateDecision(decision), call);
 
       // 承認待ちに入ったら、これ以上は起動しない。走っている分は下で待ち切る
       if (decision?.kind === "suspend") {
@@ -722,7 +746,7 @@ export class Agent {
       if (decision?.kind === "block") {
         slot.result = decision.reason;
         slot.terminate = decision.terminate === true;
-        tasks.push(this.runTool(slot, name, args, undefined, true, signal));
+        tasks.push(this.runTool(slot, undefined, true, signal));
         continue;
       }
 
@@ -745,11 +769,9 @@ export class Agent {
       // 次の起動で「走ったかもしれない」と言える
       await this.record({ kind: "attempt", toolCallId: call.id, name });
 
-      const task = this.runTool(slot, name, args, input, false, signal).finally(
-        () => {
-          running.delete(call.id);
-        },
-      );
+      const task = this.runTool(slot, input, false, signal).finally(() => {
+        running.delete(call.id);
+      });
       // runTool は投げない約束だが、破れたときに unhandled rejection で
       // プロセスごと落とさないための保険
       task.catch(() => {});
@@ -805,17 +827,12 @@ export class Agent {
   }
 
   private async runTool(
-    slot: {
-      call: OpenAI.ChatCompletionMessageFunctionToolCall;
-      result: string;
-      terminate: boolean;
-    },
-    name: string,
-    args: string,
+    slot: Slot,
     input: unknown,
     blocked: boolean,
     signal: AbortSignal | undefined,
   ): Promise<void> {
+    const { name, arguments: args } = slot.call.function;
     // 投げないこと。並列で1件でも投げると Promise.all が落ち、
     // 実行し終わった他のツールの結果まで積まれないまま run が終わる
     try {
@@ -892,126 +909,130 @@ export class Agent {
   private async *trimIfNeeded(
     signal?: AbortSignal,
   ): AsyncGenerator<AgentEvent> {
-    const { contextLimit, trim } = this.config;
-    if (!contextLimit || trim === "none") return;
+    const { contextLimit } = this.config;
+    if (!contextLimit || this.trim === "none") return;
 
     const before = Math.round(
       (charCount(this.messages) + this.toolsChars) / this.charsPerToken,
     );
     if (before <= contextLimit) return;
 
-    if (trim === "graph") {
-      const { kept, dropped } = splitSafe(this.messages, this.limitChars());
-      if (dropped.length === 0) return;
+    if (this.trim === "graph") yield* this.trimGraph(signal);
+    else if (this.trim === "compact") yield* this.trimCompact(signal);
+    else yield* this.trimPlain();
+  }
 
-      const extracted = {
-        facts: [] as Fact[],
-        unparsed: false,
-        promptTokens: 0,
-        completionTokens: 0,
-      };
-      for (const chunk of transcriptChunks(dropped)) {
-        const part = yield* this.withRetry(
-          () =>
-            extractFacts(this.config.client, this.config.model, chunk, signal),
-          signal,
-        );
-        extracted.facts.push(...part.facts);
-        extracted.unparsed ||= part.unparsed;
-        extracted.promptTokens += part.promptTokens;
-        extracted.completionTokens += part.completionTokens;
-      }
-      this.totalPromptTokens += extracted.promptTokens;
-      const { added, superseded } = this.graph.apply(extracted.facts);
+  private async *trimGraph(signal?: AbortSignal): AsyncGenerator<AgentEvent> {
+    const { kept, dropped } = splitSafe(this.messages, this.limitChars());
+    if (dropped.length === 0) return;
 
-      this.replace(kept);
-      this.prompt.set(FACTS, this.graph.render());
-      this.syncSystem();
-      await this.record({ kind: "fact", facts: extracted.facts });
-      await this.record({
-        kind: "history",
-        messages: [...this.messages],
-        summaryText: this.summaryText,
-      });
-
-      yield {
-        type: EventType.CUSTOM,
-        name: "graph",
-        value: {
-          dropped: dropped.length,
-          added,
-          superseded,
-          total: this.graph.size(),
-          active: this.graph.active().length,
-          unparsed: extracted.unparsed,
-          promptTokens: extracted.promptTokens,
-          completionTokens: extracted.completionTokens,
-        },
-      };
-    } else if (trim === "compact") {
-      const { kept, dropped } = splitSafe(this.messages, this.limitChars());
-      if (dropped.length === 0) return;
-
-      const summary = { promptTokens: 0, completionTokens: 0 };
-      let text = this.summaryText;
-      for (const chunk of transcriptChunks(dropped)) {
-        const part = yield* this.withRetry(
-          () =>
-            summarize(
-              this.config.client,
-              this.config.model,
-              text,
-              chunk,
-              signal,
-            ),
-          signal,
-        );
-        text = part.text;
-        summary.promptTokens += part.promptTokens;
-        summary.completionTokens += part.completionTokens;
-      }
-      this.summaryText = text;
-      this.totalPromptTokens += summary.promptTokens;
-
-      this.replace(kept);
-      this.prompt.set(SUMMARY, this.summaryText);
-      this.syncSystem();
-      await this.record({
-        kind: "history",
-        messages: [...this.messages],
-        summaryText: this.summaryText,
-      });
-
-      yield {
-        type: EventType.CUSTOM,
-        name: "compact",
-        value: {
-          dropped: dropped.length,
-          promptTokens: summary.promptTokens,
-          completionTokens: summary.completionTokens,
-          summary: this.summaryText,
-        },
-      };
-    } else {
-      const trimmed =
-        trim === "naive"
-          ? trimNaive(this.messages, this.limitChars())
-          : trimSafe(this.messages, this.limitChars());
-      if (trimmed.length === this.messages.length) return;
-      const removed = this.messages.length - trimmed.length;
-      this.replace(trimmed);
-      await this.record({
-        kind: "history",
-        messages: [...this.messages],
-        summaryText: this.summaryText,
-      });
-
-      yield {
-        type: EventType.CUSTOM,
-        name: "trim",
-        value: { strategy: trim, removed, kept: this.messages.length },
-      };
+    const extracted = {
+      facts: [] as Fact[],
+      unparsed: false,
+      promptTokens: 0,
+      completionTokens: 0,
+    };
+    for (const chunk of transcriptChunks(dropped)) {
+      const part = yield* this.withRetry(
+        () =>
+          extractFacts(this.config.client, this.config.model, chunk, signal),
+        signal,
+      );
+      extracted.facts.push(...part.facts);
+      extracted.unparsed ||= part.unparsed;
+      extracted.promptTokens += part.promptTokens;
+      extracted.completionTokens += part.completionTokens;
     }
+    this.totalPromptTokens += extracted.promptTokens;
+    const { added, superseded } = this.graph.apply(extracted.facts);
+
+    this.replaceHistory(kept, FACTS, this.graph.render());
+    await this.record({ kind: "fact", facts: extracted.facts });
+    await this.recordHistory();
+
+    yield {
+      type: EventType.CUSTOM,
+      name: "graph",
+      value: {
+        dropped: dropped.length,
+        added,
+        superseded,
+        total: this.graph.size(),
+        active: this.graph.active().length,
+        unparsed: extracted.unparsed,
+        promptTokens: extracted.promptTokens,
+        completionTokens: extracted.completionTokens,
+      },
+    };
+  }
+
+  private async *trimCompact(signal?: AbortSignal): AsyncGenerator<AgentEvent> {
+    const { kept, dropped } = splitSafe(this.messages, this.limitChars());
+    if (dropped.length === 0) return;
+
+    const summary = { promptTokens: 0, completionTokens: 0 };
+    let text = this.summaryText;
+    for (const chunk of transcriptChunks(dropped)) {
+      const part = yield* this.withRetry(
+        () =>
+          summarize(this.config.client, this.config.model, text, chunk, signal),
+        signal,
+      );
+      text = part.text;
+      summary.promptTokens += part.promptTokens;
+      summary.completionTokens += part.completionTokens;
+    }
+    this.summaryText = text;
+    this.totalPromptTokens += summary.promptTokens;
+
+    this.replaceHistory(kept, SUMMARY, this.summaryText);
+    await this.recordHistory();
+
+    yield {
+      type: EventType.CUSTOM,
+      name: "compact",
+      value: {
+        dropped: dropped.length,
+        promptTokens: summary.promptTokens,
+        completionTokens: summary.completionTokens,
+        summary: this.summaryText,
+      },
+    };
+  }
+
+  private async *trimPlain(): AsyncGenerator<AgentEvent> {
+    const trimmed =
+      this.trim === "naive"
+        ? trimNaive(this.messages, this.limitChars())
+        : trimSafe(this.messages, this.limitChars());
+    if (trimmed.length === this.messages.length) return;
+    const removed = this.messages.length - trimmed.length;
+    this.replace(trimmed);
+    await this.recordHistory();
+
+    yield {
+      type: EventType.CUSTOM,
+      name: "trim",
+      value: { strategy: this.trim, removed, kept: this.messages.length },
+    };
+  }
+
+  private replaceHistory(
+    kept: OpenAI.ChatCompletionMessageParam[],
+    heading: string,
+    body: string,
+  ): void {
+    this.replace(kept);
+    this.prompt.set(heading, body);
+    this.syncSystem();
+  }
+
+  private recordHistory(): Promise<void> {
+    return this.record({
+      kind: "history",
+      messages: [...this.messages],
+      summaryText: this.summaryText,
+    });
   }
 
   private replace(next: OpenAI.ChatCompletionMessageParam[]) {
