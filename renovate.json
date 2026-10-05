@@ -23,6 +23,10 @@
       "automerge": false
     },
     {
+      "matchPackageNames": ["@ag-ui/**"],
+      "groupName": "AG-UI"
+    },
+    {
       "matchPackageNames": ["node"],
       "enabled": false
     }
