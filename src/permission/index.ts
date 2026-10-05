@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   formatRule,
   hits,
@@ -23,8 +24,8 @@ export type Permissions = {
   suggestRule(name: string, args: unknown): string | undefined;
 };
 
-/** コマンド置換は中身を別に評価しないと素通りするので、allow には一致させない */
-const INJECTION = /\$\(|`/;
+/** 置換・リダイレクト・プロセス置換は中身や行き先を見ていないので、allow には一致させない */
+const INJECTION = /\$\(|`|>|<\(/;
 
 /** plan と acceptEdits は ask と同じ判定。効く範囲はルールに展開して渡される */
 const MODES = ["ask", "auto", "plan", "acceptEdits"];
@@ -83,7 +84,9 @@ export function createPermissions(
       return formatRule({
         tool: name,
         pattern:
-          subject.kind === "command" ? `${subject.value}:*` : subject.value,
+          subject.kind === "command"
+            ? `${subject.value}:*`
+            : path.normalize(subject.value),
       });
     },
   };
