@@ -13,6 +13,8 @@ const USAGE = `hma — 手書きエージェント
   hma list            保存されているスレッド一覧
   hma config          いま効いている設定と権限ルール（どこから来たかつき）
   hma trust           .hma のフックと allow を確認して信頼する
+  hma eval [name...]  .hma/evals/*.json を1件ずつ流し、ツール・トークンを表で出す
+                      承認が要ると止まって NG になるので APPROVAL=auto と併せて使う
 
   hma -p "<prompt>"   非対話。1回だけ答えて終わる（-p - で stdin から読む）
                       答えは stdout、進捗は stderr。承認が要ると止まるので APPROVAL=auto と併せて使う
@@ -37,6 +39,10 @@ switch (sub) {
     args = ["--profile", "coding", "--workspace", maybePath, ...others];
     break;
   }
+  case "eval":
+    entry = "src/eval.ts";
+    args = rest;
+    break;
   case "list":
     args = ["--list", ...rest];
     break;
