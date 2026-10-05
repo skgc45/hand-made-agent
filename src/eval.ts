@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { cp, mkdtemp, readdir, readFile, realpath, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { parseArgs } from "node:util";
+import { parseArgs, promisify } from "node:util";
 import { EventType } from "@ag-ui/core";
 import { withSubagents } from "./agent/subagent.js";
 import { loadCommands } from "./commands/index.js";
@@ -32,6 +34,8 @@ type EvalCase = {
   prompt: string;
   profile?: string;
   workspace?: string;
+  /** 終わったあと workspace の写しで走らせるコマンド。終了コード 0 で合格。元の場所は $HMA_EVAL_SOURCE */
+  check?: string;
   expect?: {
     /** 1回以上実行されていてほしいツール */
     tools?: string[];
@@ -40,8 +44,7 @@ type EvalCase = {
   };
 };
 
-type Result = {
-  name: string;
+type Run = {
   outcome: "完走" | "承認待ち" | "エラー";
   failures: string[];
   tools: Map<string, number>;
@@ -50,12 +53,26 @@ type Result = {
   completionTokens: number;
   asked: number;
   blocked: number;
+  retries: number;
+  /** 429 などのリトライで寝ていた秒 */
+  waited: number;
   seconds: number;
+  /** NG のときだけ残す workspace の写し */
+  kept?: string;
 };
 
 const EVAL_DIR = path.resolve(".hma", "evals");
+const CHECK_TIMEOUT_MS = 120_000;
 
-const { positionals } = parseArgs({ allowPositionals: true });
+const { positionals, values: opts } = parseArgs({
+  allowPositionals: true,
+  options: { repeat: { type: "string", default: "1" } },
+});
+const repeat = Number(opts.repeat);
+if (!Number.isInteger(repeat) || repeat < 1) {
+  console.error(`--repeat は1以上の整数: ${opts.repeat}`);
+  process.exit(2);
+}
 
 async function loadCases(only: string[]): Promise<EvalCase[]> {
   const files = (await readdir(EVAL_DIR).catch(() => []))
@@ -103,9 +120,44 @@ const commands = await loadCommands();
 const mcp = await connectMcp(mcpServersFor(trusted));
 const telemetry = createTelemetry();
 
-async function runCase(c: EvalCase): Promise<Result> {
-  const result: Result = {
-    name: c.name,
+async function runCheck(
+  command: string,
+  cwd: string,
+  source: string,
+): Promise<string | null> {
+  // check は .hma に書かれた任意のコマンド。API キーまでは見せない
+  const env = { ...process.env };
+  delete env.GEMINI_API_KEY;
+  delete env.LLM_API_KEY;
+  try {
+    await promisify(execFile)("sh", ["-c", command], {
+      cwd,
+      timeout: CHECK_TIMEOUT_MS,
+      maxBuffer: 16 * 1024 * 1024,
+      env: { ...env, HMA_EVAL_SOURCE: source },
+    });
+    return null;
+  } catch (error) {
+    const e = error as {
+      code?: number | string;
+      killed?: boolean;
+      stdout?: string;
+      stderr?: string;
+    };
+    const why = e.killed
+      ? `${CHECK_TIMEOUT_MS / 1000} 秒でタイムアウト`
+      : `exit ${e.code ?? "?"}`;
+    const tail = `${e.stdout ?? ""}${e.stderr ?? ""}`
+      .trim()
+      .split("\n")
+      .slice(-3)
+      .join(" / ");
+    return `check が失敗（${command} → ${why}）${tail ? `: ${tail}` : ""}`;
+  }
+}
+
+async function runOnce(c: EvalCase): Promise<Run> {
+  const run: Run = {
     outcome: "完走",
     failures: [],
     tools: new Map(),
@@ -114,18 +166,26 @@ async function runCase(c: EvalCase): Promise<Result> {
     completionTokens: 0,
     asked: 0,
     blocked: 0,
+    retries: 0,
+    waited: 0,
     seconds: 0,
   };
   const started = performance.now();
   let jobs: ReturnType<typeof withSubagents>["jobs"] | undefined;
+  // 前の試行の書き換えを持ち越さないよう、毎回 workspace の写しで動かす
+  // macOS の tmpdir は /var → /private/var のリンク。node が出す実パスと境界判定を揃える
+  const copy = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), `hma-eval-${c.name}-`)),
+  );
   try {
+    await cp(path.resolve(c.workspace ?? WORKSPACE), copy, {
+      recursive: true,
+      filter: (src) => path.basename(src) !== ".git",
+    });
     const hooks: Hooks = {};
     const assembled = withSubagents(
       withMcp(
-        withSkills(
-          createProfile(c.profile ?? PROFILE, c.workspace ?? WORKSPACE),
-          skills,
-        ),
+        withSkills(createProfile(c.profile ?? PROFILE, copy), skills),
         mcp,
       ),
       {
@@ -164,97 +224,151 @@ async function runCase(c: EvalCase): Promise<Result> {
       c.prompt,
     )) {
       if (event.type === EventType.RUN_ERROR) {
-        result.outcome = "エラー";
-        result.failures.push(event.message);
+        run.outcome = "エラー";
+        run.failures.push(event.message);
       } else if (
         event.type === EventType.RUN_FINISHED &&
         event.outcome?.type === "interrupt"
       ) {
-        result.outcome = "承認待ち";
+        run.outcome = "承認待ち";
       } else if (event.type === EventType.CUSTOM) {
         const value = event.value as Record<string, unknown>;
         if (event.name === "usage") {
-          result.modelCalls++;
-          result.promptTokens += Number(value.promptTokens ?? 0);
-          result.completionTokens += Number(value.completionTokens ?? 0);
+          run.modelCalls++;
+          run.promptTokens += Number(value.promptTokens ?? 0);
+          run.completionTokens += Number(value.completionTokens ?? 0);
         } else if (event.name === "gate") {
           // TOOL_CALL_START はモデルが呼ぼうとした時点で出る。通したものだけ数える
           if (value.decision === "run") {
             const n = String(value.tool);
-            result.tools.set(n, (result.tools.get(n) ?? 0) + 1);
+            run.tools.set(n, (run.tools.get(n) ?? 0) + 1);
           }
-          if (value.decision === "ask") result.asked++;
-          if (value.decision === "block") result.blocked++;
+          if (value.decision === "ask") run.asked++;
+          if (value.decision === "block") run.blocked++;
+        } else if (event.name === "retry") {
+          run.retries++;
+          run.waited += Number(value.waitSeconds ?? 0);
         }
       }
     }
   } catch (error) {
-    result.outcome = "エラー";
-    result.failures.push(
-      error instanceof Error ? error.message : String(error),
-    );
+    run.outcome = "エラー";
+    run.failures.push(error instanceof Error ? error.message : String(error));
   } finally {
     await jobs?.stop();
   }
-  result.seconds = (performance.now() - started) / 1000;
+  run.seconds = (performance.now() - started) / 1000;
 
-  if (result.outcome === "承認待ち") result.failures.push("承認待ちで止まった");
+  if (run.outcome === "承認待ち") run.failures.push("承認待ちで止まった");
   for (const tool of c.expect?.tools ?? []) {
-    if (!result.tools.has(tool))
-      result.failures.push(`${tool} を実行していない`);
+    if (!run.tools.has(tool)) run.failures.push(`${tool} を実行していない`);
   }
   const max = c.expect?.maxPromptTokens;
-  if (max !== undefined && result.promptTokens > max) {
-    result.failures.push(`入力トークン ${result.promptTokens} > ${max}`);
+  if (max !== undefined && run.promptTokens > max) {
+    run.failures.push(`入力トークン ${run.promptTokens} > ${max}`);
   }
-  return result;
+  if (c.check && run.outcome !== "エラー") {
+    const failed = await runCheck(
+      c.check,
+      copy,
+      path.resolve(c.workspace ?? WORKSPACE),
+    );
+    if (failed) run.failures.push(failed);
+  }
+
+  if (run.failures.length > 0) run.kept = copy;
+  else await rm(copy, { recursive: true, force: true });
+  return run;
 }
 
 console.error(
-  `${MODEL} / APPROVAL=${APPROVAL} / TRIM=${TRIM} / ${cases.length} 件\n`,
+  `${MODEL} / APPROVAL=${APPROVAL} / TRIM=${TRIM} / ${cases.length} 件 × ${repeat} 回`,
 );
+// check は .hma/evals に書かれたコマンドを本人の権限で走らせる。何が走るかを先に見せる
+for (const c of cases.filter((c) => c.check)) {
+  console.error(`  check ${c.name}: ${c.check}`);
+}
+console.error("");
 
 // 無料枠は 5 RPM。並列にすると自分で 429 を踏むので1件ずつ流す
-const results: Result[] = [];
+const results: { c: EvalCase; runs: Run[] }[] = [];
 try {
   for (const c of cases) {
-    console.error(`  ${c.name} ...`);
-    results.push(await runCase(c));
+    const runs: Run[] = [];
+    for (let i = 1; i <= repeat; i++) {
+      console.error(`  ${c.name} ${i}/${repeat} ...`);
+      runs.push(await runOnce(c));
+    }
+    results.push({ c, runs });
   }
 } finally {
   await telemetry.close();
   mcp.close();
 }
 
+/** 1回なら値だけ、複数回なら 最小/中央/最大 */
+function spread(values: number[], digits = 0): string {
+  const sorted = [...values].sort((a, b) => a - b);
+  const f = (n: number) => n.toFixed(digits);
+  if (sorted.length === 1) return f(sorted[0]);
+  const mid = sorted[Math.floor((sorted.length - 1) / 2)];
+  return `${f(sorted[0])}/${f(mid)}/${f(sorted[sorted.length - 1])}`;
+}
+
+function toolsOf(runs: Run[]): string {
+  const total = new Map<string, number>();
+  for (const r of runs) {
+    for (const [n, k] of r.tools) total.set(n, (total.get(n) ?? 0) + k);
+  }
+  const per = (k: number) =>
+    runs.length === 1 ? String(k) : (k / runs.length).toFixed(1);
+  return [...total].map(([n, k]) => `${n}×${per(k)}`).join(" ") || "-";
+}
+
 const header = [
   "名前",
-  "判定",
-  "ツール",
+  "合格",
+  "ツール（1回あたり）",
   "モデル",
   "入力tok",
   "出力tok",
   "ask",
   "block",
-  "秒",
+  "retry",
+  "秒（待ち除く）",
 ];
-const rows = results.map((r) => [
-  r.name,
-  r.failures.length === 0 ? "ok" : "NG",
-  [...r.tools].map(([n, k]) => `${n}×${k}`).join(" ") || "-",
-  String(r.modelCalls),
-  String(r.promptTokens),
-  String(r.completionTokens),
-  String(r.asked),
-  String(r.blocked),
-  r.seconds.toFixed(1),
-]);
 console.log(`| ${header.join(" | ")} |`);
 console.log(`|${header.map(() => "---").join("|")}|`);
-for (const row of rows) console.log(`| ${row.join(" | ")} |`);
-
-const failed = results.filter((r) => r.failures.length > 0);
-for (const r of failed) {
-  console.log(`\n${r.name}（${r.outcome}）`);
-  for (const f of r.failures) console.log(`  - ${f}`);
+for (const { c, runs } of results) {
+  const passed = runs.filter((r) => r.failures.length === 0).length;
+  const sum = (f: (r: Run) => number) => runs.reduce((n, r) => n + f(r), 0);
+  const row = [
+    c.name,
+    `${passed}/${runs.length}`,
+    toolsOf(runs),
+    spread(runs.map((r) => r.modelCalls)),
+    spread(runs.map((r) => r.promptTokens)),
+    spread(runs.map((r) => r.completionTokens)),
+    String(sum((r) => r.asked)),
+    String(sum((r) => r.blocked)),
+    String(sum((r) => r.retries)),
+    spread(
+      runs.map((r) => Math.max(0, r.seconds - r.waited)),
+      1,
+    ),
+  ];
+  console.log(`| ${row.join(" | ")} |`);
 }
-process.exitCode = failed.length > 0 ? 1 : 0;
+if (repeat > 1) console.log("\n複数回の列は 最小/中央/最大。");
+
+let failed = false;
+for (const { c, runs } of results) {
+  runs.forEach((r, i) => {
+    if (r.failures.length === 0) return;
+    failed = true;
+    console.log(`\n${c.name} ${i + 1}回目（${r.outcome}）`);
+    for (const f of r.failures) console.log(`  - ${f}`);
+    console.log(`  写し: ${r.kept}`);
+  });
+}
+process.exitCode = failed ? 1 : 0;

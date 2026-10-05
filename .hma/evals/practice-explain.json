@@ -2,5 +2,11 @@
   "prompt": "このプロジェクトの src にある関数を一覧して、それぞれ1行で説明してください。ファイルは変更しないでください。",
   "profile": "coding",
   "workspace": "sandbox/practice",
-  "expect": { "tools": ["read_file"], "maxPromptTokens": 30000 }
+  "check": "diff -r \"$HMA_EVAL_SOURCE\" .",
+  "expect": {
+    "tools": [
+      "read_file"
+    ],
+    "maxPromptTokens": 30000
+  }
 }
