@@ -1,5 +1,6 @@
 import { createFileTools } from "../agent/tools.js";
 import type { Profile } from "./index.js";
+import { FILE_TOOL_KINDS } from "./kinds.js";
 
 export function coding(workspace: string): Profile {
   return {
@@ -8,16 +9,7 @@ export function coding(workspace: string): Profile {
     toolset: createFileTools(workspace),
     // コーディングでは編集も聞く。acceptEdits で外せる
     permissions: { ask: ["bash", "write_file", "edit_file"] },
-    kinds: {
-      list_files: "read",
-      read_file: "read",
-      glob: "read",
-      grep: "read",
-      todo_write: "read",
-      write_file: "edit",
-      edit_file: "edit",
-      bash: "execute",
-    },
+    kinds: FILE_TOOL_KINDS,
     system: `あなたはコーディングエージェントです。
 作業対象は ${workspace} の中だけです。
 ユーザーには日本語で答えてください。

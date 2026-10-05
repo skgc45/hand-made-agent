@@ -227,7 +227,7 @@ function readSettings(file: string): Settings | undefined {
 }
 
 /** フックも層をまたいで全部走らせる。上の層で下のフックを消せないようにする */
-export function mergeHooks(...sets: (HookSet | undefined)[]): HookSet {
+function mergeHooks(...sets: (HookSet | undefined)[]): HookSet {
   const merged: HookSet = {};
   for (const event of HOOK_EVENTS) {
     const list = sets.flatMap((set) => set?.[event] ?? []);

@@ -4,14 +4,7 @@ import type {
   BeforeUserMessage,
 } from "../agent/loop.js";
 import { type HookConfig, matchesTool, runHook } from "../hooks/index.js";
-
-function parseInput(args: string): unknown {
-  try {
-    return JSON.parse(args);
-  } catch {
-    return undefined;
-  }
-}
+import { parseArgs } from "./args.js";
 
 /** フックの言い分はツール結果に混ぜて返すので、モデルから見て区別が付くようにする */
 const NOTE = "[フック]";
@@ -20,7 +13,7 @@ export function preToolUse(hooks: HookConfig[]): BeforeToolCall | undefined {
   if (hooks.length === 0) return undefined;
 
   return async ({ name, arguments: args, toolCallId }, signal) => {
-    const input = parseInput(args);
+    const input = parseArgs(args);
 
     for (const hook of hooks) {
       if (!matchesTool(hook.matcher, name, input)) continue;
@@ -56,7 +49,7 @@ export function postToolUse(hooks: HookConfig[]): AfterToolCall | undefined {
     // 実行していないものに後処理は無い
     if (blocked) return undefined;
 
-    const input = parseInput(args);
+    const input = parseArgs(args);
     let content = result;
 
     for (const hook of hooks) {

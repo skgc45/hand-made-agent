@@ -35,5 +35,3 @@ export function createProfile(name: string, workspace: string): Profile {
   }
   return build(workspace);
 }
-
-export const profileNames = Object.keys(builders);

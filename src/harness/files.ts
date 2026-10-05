@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AfterToolCall, BeforeToolCall } from "../agent/loop.js";
+import { parseArgs } from "./args.js";
 
 const READS = new Set(["read_file"]);
 /**
@@ -11,12 +12,8 @@ const FULL_READS = new Set(["read_file"]);
 const WRITES = new Set(["write_file", "edit_file"]);
 
 function pathOf(args: string): string | undefined {
-  try {
-    const parsed = JSON.parse(args) as { path?: unknown };
-    return typeof parsed.path === "string" ? parsed.path : undefined;
-  } catch {
-    return undefined;
-  }
+  const parsed = parseArgs(args) as { path?: unknown } | null | undefined;
+  return typeof parsed?.path === "string" ? parsed.path : undefined;
 }
 
 async function mtime(file: string): Promise<number | undefined> {

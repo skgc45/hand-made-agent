@@ -26,17 +26,6 @@ export function assertThreadId(threadId: string): string {
   return threadId;
 }
 
-/** 一覧用の集計。エントリを1件ずつ足していけるように差分で持つ */
-export function summaryDelta(entry: Entry): {
-  promptTokens: number;
-  pending: boolean | undefined;
-} {
-  return {
-    promptTokens: entry.kind === "usage" ? entry.promptTokens : 0,
-    pending: entry.kind === "pending" ? entry.pending !== null : undefined,
-  };
-}
-
 export function createStore(
   kind: string = STORE,
   storePath: string = STORE_PATH,
@@ -52,5 +41,3 @@ export function createStore(
       throw new Error(`STORE に不明な値: ${kind}（sqlite / file / memory）`);
   }
 }
-
-export { FileStore, MemoryStore, SqliteStore };
