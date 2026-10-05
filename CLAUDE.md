@@ -78,7 +78,8 @@ transport/ store/     stdio / http、sqlite / file / memory
 ```
 
 `profile/` と `harness/` はこの縦の流れと**直交**する。エントリ（`src/cli.ts` / `src/serve.ts`）が
-両方を組み立てて `Sessions` に渡す。組み立ての順序はこの2ファイルを読むのが一番早い。
+両方を組み立てて `Sessions` に渡す。組み立ては `src/runtime.ts`（`loadAssets` / `buildProfile` / `buildSessions`）に
+まとめてあり、各エントリは何を渡すかだけ決める。
 
 ### 押さえるべき不変条件
 

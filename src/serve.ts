@@ -1,50 +1,20 @@
-import { withSubagents } from "./agent/subagent.js";
-import { loadCommands } from "./commands/index.js";
 import {
-  APPROVAL,
-  CONTEXT_LIMIT,
-  createClient,
-  hooksFor,
   MODEL,
-  mcpServersFor,
   NEEDS_TRUST,
   PORT,
   PROFILE,
   SETTINGS_FILES,
   STORE,
   STORE_PATH,
-  STREAM,
-  TRIM,
   TRUST_SUBJECT,
   WORKSPACE,
 } from "./config.js";
-import { collectContext } from "./context/index.js";
-import { createHooks, type Hooks } from "./harness/index.js";
-import { connectMcp, withMcp } from "./mcp/index.js";
-import { createProfile } from "./profile/index.js";
-import { Sessions } from "./session/index.js";
+import { buildSessions, loadAssets } from "./runtime.js";
 import { describeTrust } from "./settings/trust.js";
 import { stopOnSignal } from "./shutdown.js";
-import { loadSkills, withSkills } from "./skills/index.js";
 import { createStore } from "./store/index.js";
 import { createTelemetry } from "./telemetry/index.js";
 import { HttpTransport } from "./transport/index.js";
-
-// 子は親と同じフックを通す。プロファイルとフックが互いに要るので、中身だけ後から差す
-const hooks: Hooks = {};
-const skills = await loadSkills();
-const commands = await loadCommands();
-const mcp = await connectMcp(mcpServersFor(!NEEDS_TRUST));
-const { profile, jobs } = withSubagents(
-  withMcp(withSkills(createProfile(PROFILE, WORKSPACE), skills), mcp),
-  {
-    client: createClient(),
-    model: MODEL,
-    contextLimit: CONTEXT_LIMIT,
-    trim: TRIM,
-    hooks,
-  },
-);
 
 // serve は入力を待てないので聞けない。無効にして、やり方だけ言う
 if (NEEDS_TRUST) {
@@ -57,26 +27,10 @@ if (NEEDS_TRUST) {
   );
 }
 
-const sections = await collectContext({
+const assets = await loadAssets(!NEEDS_TRUST);
+const { sessions, profile } = await buildSessions(assets, {
+  profile: PROFILE,
   workspace: WORKSPACE,
-  mode: APPROVAL,
-  sessionStart: hooksFor(!NEEDS_TRUST).SessionStart ?? [],
-  skills,
-});
-
-const sessions = new Sessions({
-  client: createClient(),
-  model: MODEL,
-  profile,
-  sections,
-  contextLimit: CONTEXT_LIMIT,
-  trim: TRIM,
-  stream: STREAM,
-  ...Object.assign(
-    hooks,
-    createHooks({ profile, trusted: !NEEDS_TRUST, commands }),
-  ),
-  jobs,
   store: createStore(),
   telemetry: createTelemetry(),
 });
@@ -91,4 +45,4 @@ console.log(
 stopOnSignal(transport);
 await transport.start(sessions);
 await sessions.close();
-mcp.close();
+assets.mcp.close();

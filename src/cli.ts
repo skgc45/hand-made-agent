@@ -1,16 +1,11 @@
 import { randomUUID } from "node:crypto";
 import * as readline from "node:readline/promises";
 import { parseArgs } from "node:util";
-import { withSubagents } from "./agent/subagent.js";
-import { loadCommands } from "./commands/index.js";
 import {
   APPROVAL,
-  CONTEXT_LIMIT,
-  createClient,
   describeConfig,
   hooksFor,
   MODEL,
-  mcpServersFor,
   NEEDS_TRUST,
   PROFILE,
   SETTINGS_FILES,
@@ -19,26 +14,16 @@ import {
   SETTINGS_RULES,
   STORE,
   STORE_PATH,
-  STREAM,
-  TRIM,
   TRUST_PRINT,
   TRUST_SUBJECT,
   WORKSPACE,
 } from "./config.js";
 import { collectContext } from "./context/index.js";
-import {
-  createHooks,
-  type Hooks,
-  mcpRules,
-  modeRules,
-} from "./harness/index.js";
-import { connectMcp, withMcp } from "./mcp/index.js";
-import { createProfile } from "./profile/index.js";
+import { mcpRules, modeRules } from "./harness/index.js";
 import { dim, yellow } from "./render/cli.js";
-import { Sessions } from "./session/index.js";
+import { buildProfile, buildSessions, loadAssets } from "./runtime.js";
 import { describeTrust, recordTrust } from "./settings/trust.js";
 import { stopOnSignal } from "./shutdown.js";
-import { loadSkills, withSkills } from "./skills/index.js";
 import { createStore } from "./store/index.js";
 import { createTelemetry } from "./telemetry/index.js";
 import {
@@ -142,20 +127,13 @@ if (opts.config) {
   }
 
   const ORDER = ["deny", "allow", "ask"] as const;
-  const skills = await loadSkills();
-  const commands = await loadCommands();
   // 実際に起動して tools/list を引く。繋がらないサーバはここで分かる
-  const mcp = await connectMcp(mcpServersFor(!NEEDS_TRUST));
-  const { profile: current } = withSubagents(
-    withMcp(
-      withSkills(
-        createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
-        skills,
-      ),
-      mcp,
-    ),
-    { ...subagentDeps(), hooks: {} },
-  );
+  const assets = await loadAssets(!NEEDS_TRUST);
+  const { skills, commands, mcp } = assets;
+  const { profile: current } = buildProfile(assets, {
+    profile: opts.profile ?? PROFILE,
+    workspace: opts.workspace ?? WORKSPACE,
+  });
   const rules = [
     ...ORDER.flatMap((action) =>
       (current.permissions[action] ?? []).map((rule) => ({
@@ -265,16 +243,6 @@ if (opts.config) {
   process.exit(0);
 }
 
-/** サブエージェントは親と同じモデル・同じ上限で回す */
-function subagentDeps() {
-  return {
-    client: createClient(),
-    model: MODEL,
-    contextLimit: CONTEXT_LIMIT,
-    trim: TRIM,
-  };
-}
-
 const store = createStore();
 
 if (opts.list) {
@@ -315,46 +283,14 @@ if (printing && NEEDS_TRUST) {
   );
 }
 
-// MCP サーバは信頼を聞いたあとで起動する。未信頼のまま外部プロセスを立てない。
-// 子は親と同じフックを通すので、フックの中身だけ後から差す
-const hooks: Hooks = {};
-const skills = await loadSkills();
-const commands = await loadCommands();
-const mcp = await connectMcp(mcpServersFor(trusted));
-const { profile, jobs } = withSubagents(
-  withMcp(
-    withSkills(
-      createProfile(opts.profile ?? PROFILE, opts.workspace ?? WORKSPACE),
-      skills,
-    ),
-    mcp,
-  ),
-  { ...subagentDeps(), hooks },
-);
-
-const sections = await collectContext({
-  workspace: profile.workspace,
-  mode: APPROVAL,
-  sessionStart: hooksFor(trusted).SessionStart ?? [],
-  skills,
-});
-
+const assets = await loadAssets(trusted);
 const transport: Transport = printing
   ? new PrintTransport(threadId, prompt)
   : new StdioTransport(threadId);
-const sessions = new Sessions({
-  client: createClient(),
-  model: MODEL,
-  profile,
-  sections,
-  contextLimit: CONTEXT_LIMIT,
-  trim: TRIM,
-  stream: STREAM,
-  ...Object.assign(
-    hooks,
-    createHooks({ profile, ask: transport.approve, trusted, commands }),
-  ),
-  jobs,
+const { sessions, profile } = await buildSessions(assets, {
+  profile: opts.profile ?? PROFILE,
+  workspace: opts.workspace ?? WORKSPACE,
+  ask: transport.approve,
   store,
   telemetry: createTelemetry(),
 });
@@ -377,6 +313,6 @@ banner(
 stopOnSignal(transport);
 await transport.start(sessions);
 await sessions.close();
-mcp.close();
+assets.mcp.close();
 
 if (transport instanceof PrintTransport) process.exitCode = transport.exitCode;

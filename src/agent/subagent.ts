@@ -47,7 +47,8 @@ export type JobQueue = {
 };
 
 export type SubagentDeps = {
-  client: OpenAI;
+  /** 子を起動するときに初めて作る。hma config のように子を走らせない入口が、API キー無しで動くように */
+  client: () => OpenAI;
   model: string;
   contextLimit: number;
   trim: string;
@@ -164,7 +165,7 @@ export function createSubagentTools(
   ): Promise<string> {
     let steps = 0;
     const child = new Agent({
-      client: deps.client,
+      client: deps.client(),
       model: deps.model,
       system: def.system,
       toolset: toolsFor(profile, def, own),

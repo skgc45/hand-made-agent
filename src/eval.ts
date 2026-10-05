@@ -13,22 +13,15 @@ import os from "node:os";
 import path from "node:path";
 import { parseArgs, promisify } from "node:util";
 import { EventType } from "@ag-ui/core";
-import { withSubagents } from "./agent/subagent.js";
-import { loadCommands } from "./commands/index.js";
+import type { withSubagents } from "./agent/subagent.js";
 import {
   APPROVAL,
-  CONTEXT_LIMIT,
-  createClient,
-  hooksFor,
   MODEL,
-  mcpServersFor,
   NEEDS_TRUST,
   PROFILE,
-  STREAM,
   TRIM,
   WORKSPACE,
 } from "./config.js";
-import { collectContext } from "./context/index.js";
 import {
   compareSplit,
   type EvalRecord,
@@ -37,11 +30,7 @@ import {
   score,
   verdict,
 } from "./eval/compare.js";
-import { createHooks, type Hooks } from "./harness/index.js";
-import { connectMcp, withMcp } from "./mcp/index.js";
-import { createProfile } from "./profile/index.js";
-import { Sessions } from "./session/index.js";
-import { loadSkills, withSkills } from "./skills/index.js";
+import { buildSessions, loadAssets } from "./runtime.js";
 import { MemoryStore } from "./store/memory.js";
 import { createTelemetry } from "./telemetry/index.js";
 
@@ -177,9 +166,7 @@ if (NEEDS_TRUST) {
     "未信頼の .hma があります。フック・allow・MCP は無効のまま進みます（hma trust）",
   );
 }
-const skills = await loadSkills();
-const commands = await loadCommands();
-const mcp = await connectMcp(mcpServersFor(trusted));
+const assets = await loadAssets(trusted);
 const telemetry = createTelemetry();
 
 async function runCheck(
@@ -244,42 +231,15 @@ async function runOnce(c: EvalCase): Promise<Run> {
       recursive: true,
       filter: (src) => path.basename(src) !== ".git",
     });
-    const hooks: Hooks = {};
-    const assembled = withSubagents(
-      withMcp(
-        withSkills(createProfile(c.profile ?? PROFILE, copy), skills),
-        mcp,
-      ),
-      {
-        client: createClient(),
-        model: MODEL,
-        contextLimit: CONTEXT_LIMIT,
-        trim: TRIM,
-        hooks,
-      },
-    );
-    const { profile } = assembled;
-    jobs = assembled.jobs;
-    const sections = await collectContext({
-      workspace: profile.workspace,
-      mode: APPROVAL,
-      sessionStart: hooksFor(trusted).SessionStart ?? [],
-      skills,
-    });
     // ask を渡さないので、承認が要るツールに当たると -p と同じく Interrupt で止まる
-    const sessions = new Sessions({
-      client: createClient(),
-      model: MODEL,
-      profile,
-      sections,
-      contextLimit: CONTEXT_LIMIT,
-      trim: TRIM,
-      stream: STREAM,
-      ...Object.assign(hooks, createHooks({ profile, trusted, commands })),
-      jobs,
+    const built = await buildSessions(assets, {
+      profile: c.profile ?? PROFILE,
+      workspace: copy,
       store: new MemoryStore(),
       telemetry,
     });
+    jobs = built.jobs;
+    const { sessions } = built;
 
     for await (const event of sessions.run(
       `eval-${c.name}-${randomUUID()}`,
@@ -365,7 +325,7 @@ try {
   }
 } finally {
   await telemetry.close();
-  mcp.close();
+  assets.mcp.close();
 }
 
 /** 1回なら値だけ、複数回なら 最小/中央/最大 */
