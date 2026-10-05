@@ -19,6 +19,8 @@ import {
   MODEL,
   NEEDS_TRUST,
   PROFILE,
+  TELEMETRY,
+  TELEMETRY_URL,
   TRIM,
   WORKSPACE,
 } from "./config.js";
@@ -167,7 +169,7 @@ if (NEEDS_TRUST) {
   );
 }
 const assets = await loadAssets(trusted);
-const telemetry = createTelemetry();
+const telemetry = createTelemetry(TELEMETRY, TELEMETRY_URL);
 
 async function runCheck(
   command: string,

@@ -1,5 +1,4 @@
 import type { Entry } from "../agent/loop.js";
-import { STORE, STORE_PATH } from "../config.js";
 import { FileStore } from "./file.js";
 import { MemoryStore } from "./memory.js";
 import { SqliteStore } from "./sqlite.js";
@@ -26,10 +25,7 @@ export function assertThreadId(threadId: string): string {
   return threadId;
 }
 
-export function createStore(
-  kind: string = STORE,
-  storePath: string = STORE_PATH,
-): Store {
+export function createStore(kind: string, storePath: string): Store {
   switch (kind) {
     case "sqlite":
       return new SqliteStore(storePath);

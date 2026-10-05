@@ -303,6 +303,8 @@ MCP サーバ・スキル・スラッシュコマンド・system に載る文脈
 | `TELEMETRY` | `none` | `clickhouse` で計測を流す |
 | `TELEMETRY_URL` | `http://hma:hma@localhost:8123/?database=hma` | |
 
+`APPROVAL` / `TRIM` の未知の値と、`CONTEXT_LIMIT` / `PORT` の0以上の整数でない値は、起動した時点で止まる（終了コード 2）。
+
 ---
 
 ## プロジェクトの決まりを渡す — AGENTS.md

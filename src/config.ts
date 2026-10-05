@@ -1,7 +1,8 @@
 import OpenAI from "openai";
+import { parseTrimMode, type TrimMode } from "./agent/loop.js";
 import { HOOK_EVENTS, type HookSet } from "./hooks/index.js";
 import type { McpServerConfig } from "./mcp/index.js";
-import type { PermissionSet } from "./permission/index.js";
+import { MODES, type PermissionSet } from "./permission/index.js";
 import {
   type HookSource,
   loadSettings,
@@ -28,12 +29,36 @@ export const API_KEY =
   process.env.LLM_API_KEY ?? process.env.GEMINI_API_KEY ?? "";
 export const MODEL =
   process.env.LLM_MODEL ?? settings.model ?? "gemini-3.5-flash-lite";
-export const CONTEXT_LIMIT = Number(
+/** 打ち間違いを、run の途中ではなく起動した時点で止める */
+function invalid(message: string): never {
+  console.error(`\x1b[31m${message}\x1b[0m`);
+  process.exit(2);
+}
+
+function count(name: string, raw: string | number): number {
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    invalid(`${name} は0以上の整数: ${raw}`);
+  }
+  return value;
+}
+
+export const CONTEXT_LIMIT = count(
+  "CONTEXT_LIMIT",
   process.env.CONTEXT_LIMIT ?? settings.contextLimit ?? 0,
 );
-export const TRIM = process.env.TRIM ?? settings.trim ?? "none";
-export const PORT = Number(process.env.PORT ?? settings.port ?? 3000);
+export const TRIM: TrimMode = (() => {
+  try {
+    return parseTrimMode(process.env.TRIM ?? settings.trim ?? "none");
+  } catch (error) {
+    return invalid((error as Error).message);
+  }
+})();
+export const PORT = count("PORT", process.env.PORT ?? settings.port ?? 3000);
 export const APPROVAL = process.env.APPROVAL ?? settings.approval ?? "ask";
+if (!MODES.includes(APPROVAL)) {
+  invalid(`APPROVAL に不明な値: ${APPROVAL}（${MODES.join(" / ")}）`);
+}
 /** エージェントが触れる唯一の場所。相対パスは起動時の cwd から解決される */
 export const WORKSPACE =
   process.env.WORKSPACE ?? settings.workspace ?? "sandbox";

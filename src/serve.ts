@@ -6,6 +6,8 @@ import {
   SETTINGS_FILES,
   STORE,
   STORE_PATH,
+  TELEMETRY,
+  TELEMETRY_URL,
   TRUST_SUBJECT,
   WORKSPACE,
 } from "./config.js";
@@ -31,8 +33,8 @@ const assets = await loadAssets(!NEEDS_TRUST);
 const { sessions, profile } = await buildSessions(assets, {
   profile: PROFILE,
   workspace: WORKSPACE,
-  store: createStore(),
-  telemetry: createTelemetry(),
+  store: createStore(STORE, STORE_PATH),
+  telemetry: createTelemetry(TELEMETRY, TELEMETRY_URL),
 });
 
 const transport = new HttpTransport(PORT);
