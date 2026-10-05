@@ -79,15 +79,9 @@ function parseFacts(text: string, recordedAt: string): Fact[] | undefined {
 export async function extractFacts(
   client: OpenAI,
   model: string,
-  dropped: OpenAI.ChatCompletionMessageParam[],
-  render: (m: OpenAI.ChatCompletionMessageParam) => string,
+  transcript: string,
   signal?: AbortSignal,
 ): Promise<ExtractResult> {
-  const transcript = dropped
-    .map((m) => `[${m.role}] ${render(m)}`)
-    .join("\n")
-    .slice(0, 20000);
-
   const response = await client.chat.completions.create(
     {
       model,

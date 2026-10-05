@@ -63,7 +63,7 @@ WORKSPACE=sandbox/practice APPROVAL=auto pnpm start
 主要な環境変数（README の表が正）: `GEMINI_API_KEY` / `LLM_MODEL` / `LLM_BASE_URL` / `PROFILE` /
 `WORKSPACE` / `APPROVAL`（`ask` `auto` `acceptEdits` `plan`）/ `TRIM`（`none` `naive` `safe` `compact` `graph`）/
 `CONTEXT_LIMIT` / `STORE` / `TELEMETRY` / `STREAM` / `PORT`。
-**Gemini 無料枠は 5 RPM。** 1問で5〜6回叩くのですぐ枯れる（`loop.ts` の `callModel()` に 429 リトライあり）。
+**Gemini 無料枠は 5 RPM、1日 500 回。** 1問で5〜6回叩くのですぐ枯れる（`loop.ts` の `generate()` に 429 リトライあり。日次上限はリトライしても戻らない）。
 
 ## 構成
 
@@ -72,7 +72,7 @@ WORKSPACE=sandbox/practice APPROVAL=auto pnpm start
 ```
 agent/     Agent。AG-UI イベントを yield するだけ。IO を一切知らない
   ↑
-session/   threadId ↔ Agent。store から復元し、run のたびに保存する
+session/   threadId ↔ Agent。store から復元し、保存は Agent の append に任せる
   ↑    ↑
 transport/ store/     stdio / http、sqlite / file / memory
 ```
@@ -83,13 +83,13 @@ transport/ store/     stdio / http、sqlite / file / memory
 
 ### 押さえるべき不変条件
 
-- **`src/agent/loop.ts` の `Agent.run()` が本体**（952行）。async generator で AG-UI イベントを yield する。
+- **`src/agent/loop.ts` の `Agent.run()` が本体。** async generator で AG-UI イベントを yield する。
   IO も承認も永続化も知らず、`beforeToolCall` / `afterToolCall` / `beforeUserMessage` / `append` という
   穴が開いているだけ。**機能を足すときは、まずこの既存の穴に乗せられないか探す**（`PLAN.md` の作法）
 - **承認の2モードは transport の制約そのもの。** `Transport.approve?` があれば（stdio）ループの中で `await`、
   無ければ（http）AG-UI の Interrupt で run を終える。Agent は「誰の都合か」を知らない
-- **保存は `Sessions#run()` の `finally`。** transport は保存を忘れられない。クライアントが切断して
-  generator が捨てられても保存される
+- **保存は Agent が `append` でそのつど追記する。** transport は保存を忘れられない。クライアントが切断して
+  generator が捨てられても、そこまでの分は残っている（ツールの実行前には attempt の印も残す）
 - **Profile はデコレータで積む。** `withSubagents(withMcp(withSkills(createProfile(...))))`。
   それぞれが `toolset` / `kinds` / `permissions` を足して新しい Profile を返す
 - **権限は `deny > allow > ask`、どれにも当たらなければ通す。** `APPROVAL` のモードは専用の判定を足さず、

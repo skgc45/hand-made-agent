@@ -44,33 +44,37 @@ async function readBody(req: http.IncomingMessage): Promise<RunBody> {
 
 /**
  * ブラウザから叩かれる前提の門番。認証が無いので、ここが唯一の入口の守り。
- * - Content-Type を JSON に限る（preflight を回避する単純リクエストでの CSRF を塞ぐ）
  * - Origin があればループバック由来のみ（他サイトの JS からの CSRF を塞ぐ）
  * - ループバックに待ち受けているときは Host も見る（DNS リバインディングを塞ぐ）
+ * - Content-Type を JSON に限る（preflight を回避する単純リクエストでの CSRF を塞ぐ。POST のみ）
  */
 const LOOPBACK = ["localhost", "127.0.0.1", "::1"];
 
 const hostname = (value: string): string =>
   value.replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
 
-function allowed(req: http.IncomingMessage): boolean {
-  const type = req.headers["content-type"] ?? "";
-  if (type.split(";")[0].trim() !== "application/json") return false;
-
+export function allowedOrigin(
+  headers: { host?: string; origin?: string },
+  listenHost: string,
+): boolean {
   // HOST を明示的に外へ開いた人は、Host での判定を諦める（前段で守る前提）
-  if (LOOPBACK.includes(HOST)) {
-    const host = req.headers.host;
-    if (!host || !LOOPBACK.includes(hostname(host))) return false;
+  if (LOOPBACK.includes(listenHost)) {
+    if (!headers.host || !LOOPBACK.includes(hostname(headers.host))) {
+      return false;
+    }
   }
 
-  const origin = req.headers.origin;
-  if (origin === undefined) return true;
+  if (headers.origin === undefined) return true;
   try {
     // ポートは見ない。web/ の Vite プロキシが 5173 の Origin を転送してくる
-    return LOOPBACK.includes(hostname(new URL(origin).hostname));
+    return LOOPBACK.includes(hostname(new URL(headers.origin).hostname));
   } catch {
     return false;
   }
+}
+
+export function allowedContentType(contentType: string | undefined): boolean {
+  return (contentType ?? "").split(";")[0].trim() === "application/json";
 }
 
 /**
@@ -137,21 +141,26 @@ export class HttpTransport implements Transport {
     res: http.ServerResponse,
   ) {
     try {
-      if (req.method === "POST" && req.url === "/") {
-        if (!allowed(req)) {
+      if (!allowedOrigin(req.headers, HOST)) {
+        res.writeHead(403).end("forbidden");
+        return;
+      }
+      const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+      if (req.method === "POST" && pathname === "/") {
+        if (!allowedContentType(req.headers["content-type"])) {
           res.writeHead(403).end("forbidden");
           return;
         }
         return await this.handleRun(sessions, req, res);
       }
-      if (req.method === "GET" && req.url === "/threads") {
+      if (req.method === "GET" && pathname === "/threads") {
         res.writeHead(200, {
           "Content-Type": "application/json; charset=utf-8",
         });
         res.end(JSON.stringify(await sessions.list(), null, 2));
         return;
       }
-      if (req.method === "GET" && req.url === "/") {
+      if (req.method === "GET" && pathname === "/") {
         const html = await fs.readFile(path.join(PUBLIC, "index.html"));
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(html);

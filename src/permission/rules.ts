@@ -24,12 +24,12 @@ export function formatRule(rule: Rule): string {
 }
 
 /**
- * && || ; | と改行で切る。クォートの中まで見ていないので余計に切れることはあるが、
+ * && || ; | & と改行で切る。クォートの中まで見ていないので余計に切れることはあるが、
  * 切りすぎた側は allow に一致しなくなるだけで、見逃しにはならない
  */
 export function splitCommand(command: string): string[] {
   return command
-    .split(/&&|\|\||[;|\n]/)
+    .split(/&&|\|\||[;|&\n]/)
     .map((part) => part.trim())
     .filter(Boolean);
 }
@@ -79,5 +79,8 @@ export function hits(
 
   return subject.kind === "command"
     ? matchCommand(rule.pattern, subject.value)
-    : path.matchesGlob(subject.value, rule.pattern);
+    : path.matchesGlob(
+        path.normalize(subject.value),
+        path.normalize(rule.pattern),
+      );
 }
