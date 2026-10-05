@@ -1,5 +1,6 @@
 import type { BeforeToolCall } from "../agent/loop.js";
 import type { Permissions } from "../permission/index.js";
+import { parseArgs } from "./args.js";
 
 const DENIED = "ユーザーが実行を拒否しました。別の方法を検討してください。";
 const ATTEMPTED =
@@ -28,14 +29,6 @@ export type ApprovalResult = {
 export type SaveFn = (rule: string) => Promise<string>;
 
 export type AskFn = (request: ApprovalRequest) => Promise<ApprovalResult>;
-
-function parseInput(args: string): unknown {
-  try {
-    return JSON.parse(args);
-  } catch {
-    return undefined;
-  }
-}
 
 async function remember(
   permissions: Permissions,
@@ -80,7 +73,7 @@ export function approvalHook(
       return approved ? undefined : { kind: "block", reason: DENIED };
     }
 
-    const input = parseInput(args);
+    const input = parseArgs(args);
     const decision = permissions.decide(name, input);
     if (decision === "allow") return undefined;
     if (decision === "deny") return { kind: "block", reason: BLOCKED };

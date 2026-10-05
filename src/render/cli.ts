@@ -138,3 +138,13 @@ export class CliRenderer {
     }
   }
 }
+
+/** stderr 指定を先に見る。本文（raw）は改行なしの出力、それ以外は1行として渡す */
+export function emit(
+  out: CliOutput,
+  write: (text: string, channel: "error" | "raw" | "line") => void,
+): void {
+  if (out.stderr) write(out.text, "error");
+  else if (out.raw) write(out.text, "raw");
+  else write(out.text, "line");
+}

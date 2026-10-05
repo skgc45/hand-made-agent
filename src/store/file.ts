@@ -1,12 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Entry } from "../agent/loop.js";
-import {
-  assertThreadId,
-  type Store,
-  summaryDelta,
-  type ThreadSummary,
-} from "./index.js";
+import { assertThreadId, type Store, type ThreadSummary } from "./index.js";
+import { summarize } from "./summary.js";
 
 /** 1スレッド1ファイルの JSONL。追記なので既存行は触らない */
 export class FileStore implements Store {
@@ -52,20 +48,9 @@ export class FileStore implements Store {
         fs.stat(path.join(this.dir, name)),
       ]);
 
-      // ファイル store は集計を持たないので毎回読み直して数える
-      let totalPromptTokens = 0;
-      let pending = false;
-      for (const entry of entries) {
-        const delta = summaryDelta(entry);
-        totalPromptTokens += delta.promptTokens;
-        if (delta.pending !== undefined) pending = delta.pending;
-      }
-
       summaries.push({
         threadId,
-        entries: entries.length,
-        totalPromptTokens,
-        pending,
+        ...summarize(entries),
         updatedAt: stat.mtime.toISOString(),
       });
     }

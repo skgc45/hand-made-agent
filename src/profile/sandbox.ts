@@ -1,5 +1,6 @@
 import { createFileTools } from "../agent/tools.js";
 import type { Profile } from "./index.js";
+import { FILE_TOOL_KINDS } from "./kinds.js";
 
 /** ステップ1〜7 で使ってきた、sandbox を眺めるアシスタント */
 export function sandbox(workspace: string): Profile {
@@ -8,16 +9,7 @@ export function sandbox(workspace: string): Profile {
     workspace,
     toolset: createFileTools(workspace),
     permissions: { ask: ["bash"] },
-    kinds: {
-      list_files: "read",
-      read_file: "read",
-      glob: "read",
-      grep: "read",
-      todo_write: "read",
-      write_file: "edit",
-      edit_file: "edit",
-      bash: "execute",
-    },
+    kinds: FILE_TOOL_KINDS,
     system: `あなたはファイル操作ができるアシスタントです。
 作業対象は ${workspace} の中だけです。
 ユーザーには日本語で答えてください。
