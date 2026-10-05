@@ -5,7 +5,7 @@ import type {
   BeforeUserMessage,
 } from "../agent/loop.js";
 import { type Command, commandHook } from "../commands/index.js";
-import { APPROVAL, hooksFor, permissionsFor } from "../config.js";
+import type { HookSet } from "../hooks/index.js";
 import type { PermissionSet } from "../permission/index.js";
 import { createPermissions } from "../permission/index.js";
 import type { Profile } from "../profile/index.js";
@@ -24,8 +24,14 @@ export type HarnessOptions = {
   profile: Profile;
   /** 入力を待てる transport だけが渡す。無ければ承認は Interrupt になる */
   ask?: AskFn;
-  /** .hma の中身を本人が承認したか。false なら緩める方向の設定を落とす */
+  /** .hma の中身を本人が承認したか。[s]ave で信頼を追随させるかに使う */
   trusted: boolean;
+  /** APPROVAL のモード。ルールに展開して権限に混ぜる */
+  approval: string;
+  /** 設定ファイル由来のルール。信頼していなければ緩める方向は落としてから渡す */
+  rules: PermissionSet;
+  /** 設定ファイル由来のフック。信頼していなければ本人の ~/.hma の分だけ渡す */
+  hooks: HookSet;
   /** スラッシュコマンド。入力を本文に差し替える */
   commands?: Command[];
 };
@@ -78,18 +84,20 @@ export function createHooks({
   profile,
   ask,
   trusted,
+  approval,
+  rules,
+  hooks,
   commands = [],
 }: HarnessOptions): Hooks {
   const permissions = createPermissions(
     mergePermissions(
       profile.permissions,
       mcpRules(profile),
-      permissionsFor(trusted),
-      modeRules(profile, APPROVAL),
+      rules,
+      modeRules(profile, approval),
     ),
-    APPROVAL,
+    approval,
   );
-  const hooks = hooksFor(trusted);
   const files = readBeforeEdit(profile.workspace);
 
   // 本人が [s]ave したぶんで指紋が変わる。信頼している間だけ追随させる

@@ -8,6 +8,7 @@ import {
   hooksFor,
   MODEL,
   mcpServersFor,
+  permissionsFor,
   STREAM,
   TRIM,
 } from "./config.js";
@@ -88,6 +89,9 @@ export async function buildSessions(
       profile,
       ask: opts.ask,
       trusted: assets.trusted,
+      approval: APPROVAL,
+      rules: permissionsFor(assets.trusted),
+      hooks: hooksFor(assets.trusted),
       commands: assets.commands,
     }),
   );
