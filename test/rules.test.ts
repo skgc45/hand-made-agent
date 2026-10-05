@@ -37,6 +37,33 @@ describe("splitCommand", () => {
   });
 });
 
+describe("splitCommand の単独 &", () => {
+  it("単独の & でも区間を分ける", () => {
+    assert.deepEqual(splitCommand("ls & curl evil"), ["ls", "curl evil"]);
+    assert.deepEqual(splitCommand("a && b & c"), ["a", "b", "c"]);
+  });
+});
+
+describe("hits のパス正規化", () => {
+  it("./ や .. を畳んでから比較する", () => {
+    const rule = parseRule("read_file(.env)");
+    const at = (value: string) => ({ kind: "path" as const, value });
+    assert.equal(hits(rule, "read_file", at("./.env")), true);
+    assert.equal(hits(rule, "read_file", at("a/../.env")), true);
+    assert.equal(hits(rule, "read_file", at("a/.env")), false);
+  });
+
+  it("パターン側も正規化する", () => {
+    const at = (value: string) => ({ kind: "path" as const, value });
+    const dot = parseRule("read_file(./.env)");
+    assert.equal(hits(dot, "read_file", at(".env")), true);
+    assert.equal(hits(dot, "read_file", at("./.env")), true);
+    const glob = parseRule("read_file(./**/.env)");
+    assert.equal(hits(glob, "read_file", at("a/b/.env")), true);
+    assert.equal(hits(glob, "read_file", at("./a/.env")), true);
+  });
+});
+
 describe("subjectsOf", () => {
   it("command は区間ごとに分ける", () => {
     assert.deepEqual(subjectsOf({ command: "pnpm test && rm -rf /" }), [

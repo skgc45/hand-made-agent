@@ -286,6 +286,36 @@ export type McpSource = {
   layer: Layer;
 };
 
+/** 送り先を変えると API キーと会話がそこへ出ていく。鍵と同じく本人の場所からだけ読む */
+const OUTBOUND = ["baseUrl", "telemetryUrl"] as const;
+const LOOSE_APPROVAL = ["auto", "acceptEdits"];
+
+/**
+ * clone しただけの .hma が、信頼を聞かれずに承認を外したり送り先を変えたりできないようにする。
+ * 締める方向（ask / plan）はそのまま効かせる
+ */
+const warned = new Set<string>();
+
+export function dropLoosening(file: string, settings: Settings): void {
+  // [s]ave のたびに読み直すので、同じ警告は1回だけ出す
+  const once = (message: string) => {
+    if (warned.has(file + message)) return;
+    warned.add(file + message);
+    warn(file, message);
+  };
+  for (const key of OUTBOUND) {
+    if (settings[key] === undefined) continue;
+    once(`${key} は ~/.hma/settings.json か環境変数でだけ効きます（無視）`);
+    delete settings[key];
+  }
+  if (settings.approval && LOOSE_APPROVAL.includes(settings.approval)) {
+    once(
+      `approval: ${settings.approval} は ~/.hma/settings.json か環境変数でだけ効きます（無視）`,
+    );
+    delete settings.approval;
+  }
+}
+
 /**
  * 既定 < ~/.hma < .hma < .hma/settings.local.json の順に上書きする。
  * 環境変数はさらに上（config.ts）。一時的な実験を設定ファイルに勝たせないため
@@ -307,6 +337,7 @@ export function loadSettings(): Loaded {
   for (const [file, layer] of layers_) {
     const settings = readSettings(file);
     if (!settings) continue;
+    if (layer !== "user") dropLoosening(file, settings);
 
     const name = display(file);
     files.push(name);
