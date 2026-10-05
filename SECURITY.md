@@ -23,7 +23,7 @@
 | | |
 |---|---|
 | `hma serve` はループバックにだけ待ち受ける | 認証が無く、承認をクライアント自身が返すため |
-| `POST /` は Content-Type / Origin / Host を見る | 他サイトからの CSRF と DNS リバインディング |
+| 全リクエストで Origin / Host、`POST /` では加えて Content-Type を見る | 他サイトからの CSRF と DNS リバインディング |
 | リクエストボディは 1MB まで | |
 | 承認 UI はツール名を `textContent` で出す | MCP のツール名は外部由来 |
 | `threadId` は `[A-Za-z0-9_-]{1,128}` のみ | 保存先のパス移動 |
