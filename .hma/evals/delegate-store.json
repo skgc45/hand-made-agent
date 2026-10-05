@@ -1,0 +1,8 @@
+{
+  "prompt": "store/ にある3つの実装（sqlite / file / memory）の違いを、explore を background: true で起動して調べさせてください。その間に、あなたは agent/ にあるファイルの一覧を出してください。最後に両方をまとめて答えてください。ファイルは変更しないでください。",
+  "profile": "coding",
+  "workspace": "src",
+  "split": "train",
+  "check": "diff -r \"$HMA_EVAL_SOURCE\" .",
+  "expect": { "tools": ["explore"] }
+}

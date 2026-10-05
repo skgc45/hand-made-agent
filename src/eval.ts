@@ -1,6 +1,14 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cp, mkdtemp, readdir, readFile, realpath, rm } from "node:fs/promises";
+import {
+  cp,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs, promisify } from "node:util";
@@ -21,6 +29,14 @@ import {
   WORKSPACE,
 } from "./config.js";
 import { collectContext } from "./context/index.js";
+import {
+  compareSplit,
+  type EvalRecord,
+  type Split,
+  sameCases,
+  score,
+  verdict,
+} from "./eval/compare.js";
 import { createHooks, type Hooks } from "./harness/index.js";
 import { connectMcp, withMcp } from "./mcp/index.js";
 import { createProfile } from "./profile/index.js";
@@ -34,6 +50,8 @@ type EvalCase = {
   prompt: string;
   profile?: string;
   workspace?: string;
+  /** hillclimbing で、見ながら直す train か、直すときに見ない test か */
+  split?: Split;
   /** 終わったあと workspace の写しで走らせるコマンド。終了コード 0 で合格。元の場所は $HMA_EVAL_SOURCE */
   check?: string;
   expect?: {
@@ -66,8 +84,49 @@ const CHECK_TIMEOUT_MS = 120_000;
 
 const { positionals, values: opts } = parseArgs({
   allowPositionals: true,
-  options: { repeat: { type: "string", default: "1" } },
+  options: {
+    repeat: { type: "string", default: "1" },
+    out: { type: "string" },
+    compare: { type: "boolean" },
+  },
 });
+
+if (opts.compare) {
+  if (positionals.length !== 2) {
+    console.error("使い方: hma eval --compare <変更前.json> <変更後.json>");
+    process.exit(2);
+  }
+  const [before, after] = await Promise.all(
+    positionals.map(async (f) => {
+      try {
+        const record = JSON.parse(await readFile(f, "utf-8")) as EvalRecord;
+        if (!Array.isArray(record?.cases))
+          throw new Error("cases がありません");
+        return record;
+      } catch (error) {
+        console.error(`${f} を読めません: ${(error as Error).message}`);
+        process.exit(2);
+      }
+    }),
+  );
+  if (!sameCases(before, after)) {
+    console.error("前後でお題（名前と split）の顔ぶれが違います");
+  }
+  console.log(
+    "| 区分 | 合格（前 → 後） | 入力tok の中央値の合計（前 → 後） | 変化 |",
+  );
+  console.log("|---|---|---|---|");
+  for (const split of ["train", "test"] as const) {
+    const b = score(before, split);
+    const a = score(after, split);
+    console.log(
+      `| ${split} | ${b.passed}/${b.total} → ${a.passed}/${a.total} | ${b.tokens} → ${a.tokens} | ${b.total && a.total ? compareSplit(before, after, split) : "-"} |`,
+    );
+  }
+  console.log(`\n判定: ${verdict(before, after)}`);
+  process.exit(0);
+}
+
 const repeat = Number(opts.repeat);
 if (!Number.isInteger(repeat) || repeat < 1) {
   console.error(`--repeat は1以上の整数: ${opts.repeat}`);
@@ -88,6 +147,9 @@ async function loadCases(only: string[]): Promise<EvalCase[]> {
       }
       if (typeof body?.prompt !== "string" || !body.prompt.trim()) {
         throw new Error(`${f}: prompt がありません`);
+      }
+      if (body.split !== undefined && !["train", "test"].includes(body.split)) {
+        throw new Error(`${f}: split は train か test: ${body.split}`);
       }
       return { ...body, name: path.basename(f, ".json") };
     }),
@@ -371,4 +433,28 @@ for (const { c, runs } of results) {
     console.log(`  写し: ${r.kept}`);
   });
 }
+if (opts.out) {
+  const record: EvalRecord = {
+    model: MODEL,
+    createdAt: new Date().toISOString(),
+    cases: results.map(({ c, runs }) => ({
+      name: c.name,
+      split: c.split,
+      runs: runs.map((r) => ({
+        passed: r.failures.length === 0,
+        promptTokens: r.promptTokens,
+      })),
+    })),
+  };
+  try {
+    await writeFile(opts.out, `${JSON.stringify(record, null, 2)}\n`, "utf-8");
+    console.log(`\n${opts.out} に保存しました（hma eval --compare で比べる）`);
+  } catch (error) {
+    console.error(
+      `\n${opts.out} に保存できません: ${(error as Error).message}`,
+    );
+    failed = true;
+  }
+}
+
 process.exitCode = failed ? 1 : 0;

@@ -14,7 +14,8 @@ const USAGE = `hma — 手書きエージェント
   hma config          いま効いている設定と権限ルール（どこから来たかつき）
   hma trust           .hma のフックと allow を確認して信頼する
   hma eval [name...]  .hma/evals/*.json を workspace の写しで1件ずつ流し、check の合否・ツール・トークンを表で出す
-                      --repeat N で同じお題を N 回流す
+                      --repeat N で同じお題を N 回流す。--out <file> で結果を残し、
+                      --compare <前.json> <後.json> で train / test ごとの採否を出す
                       承認が要ると止まって NG になるので APPROVAL=auto と併せて使う
 
   hma -p "<prompt>"   非対話。1回だけ答えて終わる（-p - で stdin から読む）
