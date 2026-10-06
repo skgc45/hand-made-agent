@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { realpathLoose, relativeInside } from "../agent/realpath.js";
 import {
   HOOK_EVENTS,
   type HookConfig,
@@ -296,30 +297,18 @@ const LOOSE_APPROVAL = ["auto", "acceptEdits"];
  */
 const warned = new Set<string>();
 
-/** まだ無いパスは、実在する一番近い親を実体に直してから残りを足す */
-function realOrResolved(p: string): string {
-  const full = path.resolve(p);
+/** 実体どうしで比べる。プロジェクトのディレクトリ自体がリンク越し（/var と /private/var）でも外と取り違えない */
+function realInside(dir: string, target: string): boolean {
   try {
-    return fs.realpathSync(full);
+    return (
+      relativeInside(
+        realpathLoose(path.resolve(dir)),
+        realpathLoose(path.resolve(target)),
+      ) !== undefined
+    );
   } catch {
-    const parent = path.dirname(full);
-    return parent === full
-      ? full
-      : path.join(realOrResolved(parent), path.basename(full));
+    return false;
   }
-}
-
-/** プロジェクトのディレクトリ（そのもの含む）の中を指すか。シンボリックリンクで抜けるものも外とみなす */
-export function isInside(dir: string, target: string): boolean {
-  const relative = path.relative(realOrResolved(dir), realOrResolved(target));
-  return (
-    relative === "" ||
-    !(
-      relative === ".." ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
-    )
-  );
 }
 
 export function dropLoosening(
@@ -346,7 +335,7 @@ export function dropLoosening(
   }
   if (
     settings.workspace !== undefined &&
-    !isInside(projectDir, settings.workspace)
+    !realInside(projectDir, settings.workspace)
   ) {
     once(
       `workspace: ${settings.workspace} はプロジェクトの外を指すので ~/.hma/settings.json か環境変数でだけ効きます（無視）`,
