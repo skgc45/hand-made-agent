@@ -5,6 +5,8 @@ import type { Entry } from "../agent/loop.js";
 import { assertThreadId, type Store, type ThreadSummary } from "./index.js";
 import { summaryDelta } from "./summary.js";
 
+const BUSY_TIMEOUT_MS = 5000;
+
 export class SqliteStore implements Store {
   private readonly db: DatabaseSync;
 
@@ -13,6 +15,7 @@ export class SqliteStore implements Store {
       fs.mkdirSync(path.dirname(file), { recursive: true });
     this.db = new DatabaseSync(file);
 
+    this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
     // クラッシュしても直前のコミットまで残る。既定の journal だと書き込み中の停止で壊れうる
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`
