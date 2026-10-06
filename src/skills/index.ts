@@ -172,7 +172,9 @@ export function withSkills(profile: Profile, skills: Skill[]): Profile {
     ...profile,
     kinds: { ...profile.kinds, skill: "read" },
     toolset: {
-      tools: [...profile.toolset.tools, ...sub.tools],
+      get tools() {
+        return [...profile.toolset.tools, ...sub.tools];
+      },
       drain: profile.toolset.drain,
       execute: (name, input, signal) =>
         name === "skill"

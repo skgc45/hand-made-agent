@@ -114,23 +114,25 @@ function toolsFor(
   def: SubagentDef,
   own: Set<string>,
 ): Toolset {
-  const allowed = new Set(
-    profile.toolset.tools
-      .filter((tool) => tool.type === "function")
-      .map((tool) => tool.function.name)
-      .filter(
-        (name) =>
-          !own.has(name) &&
-          def.kinds.includes(profile.kinds[name] ?? "execute"),
-      ),
-  );
+  // 遅延公開のツールは実行中に増えるので、毎回親の今の道具から抜く
+  const allowedTools = () =>
+    profile.toolset.tools.filter(
+      (tool) =>
+        tool.type === "function" &&
+        !own.has(tool.function.name) &&
+        def.kinds.includes(profile.kinds[tool.function.name] ?? "execute"),
+    );
+  const allowed = (name: string) =>
+    allowedTools().some(
+      (tool) => tool.type === "function" && tool.function.name === name,
+    );
 
   return {
-    tools: profile.toolset.tools.filter(
-      (tool) => tool.type === "function" && allowed.has(tool.function.name),
-    ),
+    get tools() {
+      return allowedTools();
+    },
     execute: (name, input, signal) =>
-      allowed.has(name)
+      allowed(name)
         ? profile.toolset.execute(name, input, signal)
         : Promise.resolve(
             `エラー: このサブエージェントは ${name} を使えません`,
@@ -364,7 +366,9 @@ export function withSubagents(
     system: appendToBase(profile.system, CHOOSING),
     kinds: { ...profile.kinds, ...sub.kinds },
     toolset: {
-      tools: [...profile.toolset.tools, ...sub.tools],
+      get tools() {
+        return [...profile.toolset.tools, ...sub.tools];
+      },
       drain: () => [
         ...(profile.toolset.drain?.() ?? []),
         ...(sub.drain?.() ?? []),
