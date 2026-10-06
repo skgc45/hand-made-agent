@@ -20,7 +20,7 @@ import {
   TRUST_SUBJECT,
   WORKSPACE,
 } from "./config.js";
-import { collectContext } from "./context/index.js";
+import { collectContext, hasProjectMemory } from "./context/index.js";
 import { mcpRules, modeRules } from "./harness/index.js";
 import { dim, yellow } from "./render/cli.js";
 import { buildProfile, buildSessions, loadAssets } from "./runtime.js";
@@ -64,6 +64,11 @@ async function askTrust(): Promise<boolean> {
   console.log(
     "\n\x1b[2m実行はあなた自身の権限で、承認を通らずに行われます（環境変数も見えます）。\x1b[0m",
   );
+  if (await hasProjectMemory()) {
+    console.log(
+      "\x1b[2mこのディレクトリから上の AGENTS.md も、注記なしで載せるようになります。\x1b[0m",
+    );
+  }
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -91,9 +96,12 @@ if (opts.trust) {
     TRUST_SUBJECT.rules.length === 0 &&
     TRUST_SUBJECT.mcp.length === 0
   ) {
-    console.log("このディレクトリの .hma に、確認が要るものはありません。");
+    await recordTrust(TRUST_PRINT);
+    console.log(
+      "このディレクトリの .hma に、確認が要るものはありません。このディレクトリの AGENTS.md を信頼済みとして記録しました。",
+    );
   } else if (!NEEDS_TRUST) {
-    console.log("信頼済みです:");
+    console.log("信頼済みです（AGENTS.md も注記なしで載せます）:");
     for (const line of describeTrust(TRUST_SUBJECT)) console.log(line);
   } else {
     await askTrust();

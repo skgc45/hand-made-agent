@@ -20,6 +20,7 @@ process.chdir(project);
 const { dropLoosening, loadSettings, saveAllowRule } = await import(
   "../src/settings/index.js"
 );
+const { projectMemory } = await import("../src/context/index.js");
 const {
   describeTrust,
   fingerprint,
@@ -172,5 +173,31 @@ describe("workspace", () => {
     write({ workspace: "/" });
     const { settings } = loadSettings();
     assert.equal(settings.workspace, undefined);
+  });
+});
+
+describe("AGENTS.md の注記", () => {
+  it("未信頼なら注記を付け、信頼済みなら付けない", async () => {
+    writeFileSync(path.join(project, "AGENTS.md"), "決まりごと");
+    const untrusted = await projectMemory(false);
+    const trusted = await projectMemory(true);
+    assert.match(untrusted, /未信頼のリポジトリの文書/);
+    assert.match(untrusted, /決まりごと/);
+    assert.doesNotMatch(trusted, /未信頼/);
+    assert.match(trusted, /決まりごと/);
+  });
+
+  it("~/.hma の AGENTS.md には注記を付けない", async () => {
+    const home = path.join(process.env.HOME as string, ".hma");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(path.join(home, "AGENTS.md"), "本人の決まり");
+    writeFileSync(path.join(project, "AGENTS.md"), "リポジトリの決まり");
+    const text = await projectMemory(false);
+    const [own, repo] = text
+      .split("リポジトリの決まり")[0]
+      .split("本人の決まり");
+    assert.equal(own, "");
+    assert.match(repo, /未信頼のリポジトリの文書/);
+    assert.ok(text.endsWith("リポジトリの決まり"));
   });
 });
