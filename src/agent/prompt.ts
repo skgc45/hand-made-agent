@@ -10,6 +10,11 @@ export function untrusted(body: string): string {
   return `${UNTRUSTED_NOTICE}\n${body}`;
 }
 
+/** base の末尾に、見出しの無い文章を段落として足す */
+export function appendToBase(base: string, text: string): string {
+  return `${base}\n\n${text}`;
+}
+
 /**
  * system メッセージの組み立て。base のあとに、名前の付いた節を並べる。
  * compaction も事実グラフも messages[0] を作り直すので、文字列連結はここだけにする。
