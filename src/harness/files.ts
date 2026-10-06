@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { AfterToolCall, BeforeToolCall } from "../agent/loop.js";
 import { parseArgs } from "./args.js";
@@ -127,6 +128,38 @@ const MAX_CHARS = 15000;
 const READ_MAX_LINES = 2000;
 const READ_MAX_CHARS = 80000;
 
+/** テストの失敗やビルドエラーは出力の末尾に出るので、bash は末尾を残す */
+async function keepTail(result: string): Promise<string> {
+  // 失敗したコマンドの結果は exit N で始まる。先頭を落としても終了コードは残す
+  const exit = /^exit \S+\n/.exec(result)?.[0] ?? "";
+  const body = result.slice(exit.length);
+  const lines = body.split("\n");
+  const byLines = lines.slice(-MAX_LINES).join("\n");
+  let kept = byLines.slice(-MAX_CHARS);
+  const boundary = kept.indexOf("\n");
+  if (byLines.length > MAX_CHARS && boundary >= 0) {
+    kept = kept.slice(boundary + 1);
+  }
+
+  const dropped = lines.length - kept.split("\n").length;
+  const head =
+    dropped > 0
+      ? `先頭 ${dropped} 行を省きました`
+      : `先頭 ${body.length - kept.length} 文字を省きました`;
+
+  let where: string;
+  try {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "hma-bash-"));
+    const full = path.join(dir, "output.txt");
+    // 鍵が出た出力も書かれうる。mkdtemp のディレクトリは 0700 だが、ファイルも本人だけにする
+    await fs.writeFile(full, result, { mode: 0o600 });
+    where = `全文は ${full}。bash で grep / sed / tail で絞れます`;
+  } catch {
+    where = "全文は保存できませんでした";
+  }
+  return `${exit}（長すぎるので${head}。${where}）\n${kept}`;
+}
+
 export function truncateResult(): AfterToolCall {
   return async ({ name, arguments: args, result }) => {
     const reading = FULL_READS.has(name);
@@ -137,6 +170,8 @@ export function truncateResult(): AfterToolCall {
     if (lines.length <= maxLines && result.length <= maxChars) {
       return undefined;
     }
+
+    if (name === "bash") return { content: await keepTail(result) };
 
     const byLines = lines.slice(0, maxLines).join("\n");
     let kept = byLines.slice(0, maxChars);
