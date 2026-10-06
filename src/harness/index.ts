@@ -97,6 +97,7 @@ export function createHooks({
       modeRules(profile, approval),
     ),
     approval,
+    profile.workspace,
   );
   const files = readBeforeEdit(profile.workspace);
 
