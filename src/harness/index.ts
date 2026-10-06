@@ -109,7 +109,7 @@ export function createHooks({
   return {
     // 外部フックが先。block も allow もフックの言い分が権限ルールより強い
     beforeToolCall: composeBefore([
-      preToolUse(hooks.PreToolUse ?? []),
+      preToolUse(hooks.PreToolUse ?? [], profile.workspace),
       // 承認より先に見る。読んでいないファイルは、許可しても書かせない
       files.before,
       approvalHook(permissions, ask, save),
@@ -118,7 +118,7 @@ export function createHooks({
     afterToolCall: composeAfter([
       files.after,
       truncateResult(),
-      postToolUse(hooks.PostToolUse ?? []),
+      postToolUse(hooks.PostToolUse ?? [], profile.workspace),
     ]),
     // コマンドを先に展開する。外部フックは展開後の本文を見て止められる
     beforeUserMessage: composeUser([
