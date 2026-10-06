@@ -24,7 +24,7 @@ export type Skill = {
 };
 
 /** --- で挟まれた name / description だけ読む。YAML パーサは持たない */
-function frontmatter(text: string): {
+export function frontmatter(text: string): {
   fields: Record<string, string>;
   body: string;
 } {
