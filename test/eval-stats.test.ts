@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mannWhitney } from "../src/eval/stats.js";
+import { fisherExact, mannWhitney } from "../src/eval/stats.js";
 
 describe("mannWhitney", () => {
   it("同じ分布なら p は大きい", () => {
@@ -28,5 +28,17 @@ describe("mannWhitney", () => {
     const b = [20, 21, 22, 23, 24, 25, 26, 27, 1000];
     const c = [20, 21, 22, 23, 24, 25, 26, 27, 28];
     assert.equal(mannWhitney(a, b).p, mannWhitney(a, c).p);
+  });
+});
+
+describe("fisherExact", () => {
+  it("既知の値と合う", () => {
+    assert.ok(Math.abs(fisherExact(9, 9, 0, 9) - 2 / 48620) < 1e-9);
+    assert.ok(Math.abs(fisherExact(3, 3, 0, 3) - 0.1) < 1e-9);
+    assert.ok(Math.abs(fisherExact(0, 9, 5, 9) - 5 / 170) < 1e-9);
+  });
+
+  it("同じ割合なら 1", () => {
+    assert.equal(fisherExact(2, 9, 2, 9), 1);
   });
 });

@@ -43,3 +43,38 @@ export function mannWhitney(
   const z = Math.max(0, Math.abs(u - (n1 * n2) / 2) - 0.5) / sigma;
   return { p: Math.min(1, 2 * (1 - normalCdf(z))), u };
 }
+
+function logFactorial(n: number): number {
+  let s = 0;
+  for (let i = 2; i <= n; i++) s += Math.log(i);
+  return s;
+}
+
+/**
+ * Fisher の正確検定（両側）。a/n1 と b/n2 の割合に差があるか。
+ * 回数が少ないとき、割合の比較に正規近似は使えない
+ */
+export function fisherExact(
+  a: number,
+  n1: number,
+  b: number,
+  n2: number,
+): number {
+  const k = a + b;
+  const n = n1 + n2;
+  const logP = (x: number) =>
+    logFactorial(k) -
+    logFactorial(x) -
+    logFactorial(k - x) +
+    logFactorial(n - k) -
+    logFactorial(n1 - x) -
+    logFactorial(n - k - n1 + x) -
+    (logFactorial(n) - logFactorial(n1) - logFactorial(n2));
+  const observed = logP(a);
+  let p = 0;
+  for (let x = Math.max(0, k - n2); x <= Math.min(k, n1); x++) {
+    const lp = logP(x);
+    if (lp <= observed + 1e-7) p += Math.exp(lp);
+  }
+  return Math.min(1, p);
+}
