@@ -4,6 +4,8 @@ export type Split = "train" | "test";
 export type RunRecord = {
   passed: boolean;
   promptTokens: number;
+  /** 親が実行したツールと回数。ステップ22 の記録には無い */
+  tools?: Record<string, number>;
 };
 
 export type CaseRecord = {

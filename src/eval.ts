@@ -405,6 +405,7 @@ if (opts.out) {
       runs: runs.map((r) => ({
         passed: r.failures.length === 0,
         promptTokens: r.promptTokens,
+        tools: Object.fromEntries(r.tools),
       })),
     })),
   };
