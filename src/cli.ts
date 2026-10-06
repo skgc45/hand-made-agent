@@ -232,7 +232,7 @@ if (opts.config) {
   const commandWidth = Math.max(1, ...commands.map((c) => cells(c.name) + 1));
   for (const command of commands) {
     console.log(
-      `  ${pad(`/${command.name}`, commandWidth)}  \x1b[2m${command.body.length} 文字  ${command.source}\x1b[0m`,
+      `  ${pad(`/${command.name}`, commandWidth)}  ${command.argumentHint ? `${command.argumentHint}  ` : ""}\x1b[2m${command.body.length} 文字  ${command.source}\x1b[0m`,
     );
   }
 
