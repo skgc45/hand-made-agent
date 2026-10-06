@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventType } from "@ag-ui/core";
 import type OpenAI from "openai";
 import type { Profile } from "../profile/index.js";
+import { custom, type SubagentBody } from "./events.js";
 import {
   type AfterToolCall,
   Agent,
@@ -150,12 +151,8 @@ export function createSubagentTools(
 } {
   const own = new Set(SUBAGENTS.map((def) => def.name));
   const queue: AgentEvent[] = [];
-  const emit = (agent: string, value: Record<string, unknown>) => {
-    queue.push({
-      type: EventType.CUSTOM,
-      name: "subagent",
-      value: { agent, ...value },
-    });
+  const emit = (agent: string, value: SubagentBody) => {
+    queue.push(custom("subagent", { agent, ...value }));
   };
 
   async function run(
@@ -220,10 +217,7 @@ export function createSubagentTools(
             break;
           case EventType.CUSTOM:
             if (event.name === "usage") {
-              promptTokens = Number(
-                (event.value as { totalPromptTokens?: number })
-                  .totalPromptTokens ?? promptTokens,
-              );
+              promptTokens = event.value.totalPromptTokens;
             }
             break;
         }

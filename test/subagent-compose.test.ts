@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { EventType } from "@ag-ui/core";
 import type OpenAI from "openai";
+import { custom } from "../src/agent/events.js";
 import type { AgentEvent } from "../src/agent/loop.js";
 import { withSubagents } from "../src/agent/subagent.js";
 import { createProfile } from "../src/profile/index.js";
@@ -14,24 +14,20 @@ const deps = {
   hooks: {},
 };
 
-const custom = (name: string): AgentEvent => ({
-  type: EventType.CUSTOM,
-  name,
-  value: {},
-});
+const marker = (): AgentEvent => custom("steering", { messages: [] });
 
 describe("withSubagents", () => {
   it("内側の drain を捨てず、内側 → 自分の順で返す", () => {
     const base = createProfile("sandbox", process.cwd());
     const inner = {
       ...base,
-      toolset: { ...base.toolset, drain: () => [custom("inner")] },
+      toolset: { ...base.toolset, drain: () => [marker()] },
     };
     const { profile } = withSubagents(inner, deps);
     const names = (profile.toolset.drain?.() ?? []).map((e) =>
       "name" in e ? e.name : "",
     );
-    assert.deepEqual(names, ["inner"]);
+    assert.deepEqual(names, ["steering"]);
   });
 
   it("内側に drain が無くても動く", () => {

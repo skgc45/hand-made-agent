@@ -297,23 +297,22 @@ async function runOnce(c: EvalCase, source: string): Promise<Run> {
       ) {
         run.outcome = "承認待ち";
       } else if (event.type === EventType.CUSTOM) {
-        const value = event.value as Record<string, unknown>;
         if (event.name === "usage") {
           run.modelCalls++;
-          run.promptTokens += Number(value.promptTokens ?? 0);
-          run.completionTokens += Number(value.completionTokens ?? 0);
+          run.promptTokens += event.value.promptTokens;
+          run.completionTokens += event.value.completionTokens;
         } else if (event.name === "gate") {
           // TOOL_CALL_START はモデルが呼ぼうとした時点で出る。通したものだけ数える
-          if (value.decision === "run") {
-            const n = String(value.tool);
+          if (event.value.decision === "run") {
+            const n = event.value.tool;
             run.tools.set(n, (run.tools.get(n) ?? 0) + 1);
-            run.calls.push({ tool: n, arguments: String(value.arguments) });
+            run.calls.push({ tool: n, arguments: event.value.arguments });
           }
-          if (value.decision === "ask") run.asked++;
-          if (value.decision === "block") run.blocked++;
+          if (event.value.decision === "ask") run.asked++;
+          if (event.value.decision === "block") run.blocked++;
         } else if (event.name === "retry") {
           run.retries++;
-          run.waited += Number(value.waitSeconds ?? 0);
+          run.waited += event.value.waitSeconds;
         }
       }
     }
