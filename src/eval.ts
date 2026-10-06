@@ -33,7 +33,7 @@ type EvalCase = {
   prompt: string;
   profile?: string;
   workspace?: string;
-  /** hillclimbing で、見ながら直す train か、直すときに見ない test か */
+  /** 見ながら直す train、直すときに見ない test、下がらないかだけ見る guard */
   split?: Split;
   /** 終わったあと workspace の写しで走らせるコマンド。終了コード 0 で合格。流し始めの写しは $HMA_EVAL_SOURCE、最後の答えのファイルは $HMA_EVAL_ANSWER */
   check?: string;
@@ -114,8 +114,11 @@ if (opts.compare) {
     "| 区分 | 合格（前 → 後） | 入力tok の中央値の合計（前 → 後） | 変化 | 手出し（前 → 後） | 変化 |",
   );
   console.log("|---|---|---|---|---|---|");
-  for (const split of ["train", "test"] as const) {
+  for (const split of ["train", "test", "guard"] as const) {
     const b = score(before, split);
+    if (split === "guard" && b.total === 0 && score(after, split).total === 0) {
+      continue;
+    }
     const a = score(after, split);
     const tb = touchedScore(before, split);
     const ta = touchedScore(after, split);
@@ -167,8 +170,11 @@ async function loadCases(only: string[]): Promise<EvalCase[]> {
       if (typeof body?.prompt !== "string" || !body.prompt.trim()) {
         throw new Error(`${f}: prompt がありません`);
       }
-      if (body.split !== undefined && !["train", "test"].includes(body.split)) {
-        throw new Error(`${f}: split は train か test: ${body.split}`);
+      if (
+        body.split !== undefined &&
+        !["train", "test", "guard"].includes(body.split)
+      ) {
+        throw new Error(`${f}: split は train か test か guard: ${body.split}`);
       }
       // "." や ".." を書くと全部の呼び出しが手出しになる
       const bad = body.expect?.untouched?.find(
