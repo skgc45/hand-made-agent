@@ -11,6 +11,7 @@ import {
   permissionsFor,
   STREAM,
   TRIM,
+  TRUST_PRINT,
 } from "./config.js";
 import { collectContext } from "./context/index.js";
 import type { AskFn } from "./harness/approval.js";
@@ -18,6 +19,7 @@ import { createHooks, type Hooks } from "./harness/index.js";
 import { connectMcp, type McpToolset, withMcp } from "./mcp/index.js";
 import { createProfile } from "./profile/index.js";
 import { Sessions } from "./session/index.js";
+import { isTrusted } from "./settings/trust.js";
 import { loadSkills, type Skill, withSkills } from "./skills/index.js";
 import type { Store } from "./store/index.js";
 import type { Telemetry } from "./telemetry/index.js";
@@ -82,6 +84,7 @@ export async function buildSessions(
     mode: APPROVAL,
     sessionStart: hooksFor(assets.trusted).SessionStart ?? [],
     skills: assets.skills,
+    trusted: assets.trusted && isTrusted(TRUST_PRINT),
   });
   Object.assign(
     hooks,

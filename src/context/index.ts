@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { PromptSection } from "../agent/prompt.js";
+import { type PromptSection, untrusted } from "../agent/prompt.js";
 import { type HookConfig, runHook } from "../hooks/index.js";
 import { type Skill, skillsSection } from "../skills/index.js";
 
@@ -32,23 +32,41 @@ async function readCapped(file: string): Promise<string | undefined> {
 }
 
 /** cwd から上へ辿る。外側にあるものほど一般的なので、外から順に並べる */
-async function projectMemory(): Promise<string> {
+function ancestors(): string[] {
   const home = os.homedir();
   const dirs: string[] = [];
-
   for (let dir = path.resolve("."); ; dir = path.dirname(dir)) {
     dirs.unshift(dir);
     const parent = path.dirname(dir);
     if (parent === dir || dir === home) break;
   }
+  return dirs;
+}
+
+/** 信頼の確認で、AGENTS.md も対象になると伝えるかどうかの判断に使う */
+export async function hasProjectMemory(): Promise<boolean> {
+  for (const dir of ancestors()) {
+    if (await readCapped(path.join(dir, MEMORY))) return true;
+  }
+  return false;
+}
+
+export async function projectMemory(trusted = true): Promise<string> {
+  const home = os.homedir();
+  const dirs = ancestors();
 
   const parts: string[] = [];
   const global = await readCapped(path.join(home, ".hma", MEMORY));
   if (global) parts.push(global);
 
+  const fromProject: string[] = [];
   for (const dir of dirs) {
     const body = await readCapped(path.join(dir, MEMORY));
-    if (body) parts.push(body);
+    if (body) fromProject.push(body);
+  }
+  if (fromProject.length > 0) {
+    const joined = fromProject.join("\n\n");
+    parts.push(trusted ? joined : untrusted(joined));
   }
   return parts.join("\n\n");
 }
@@ -93,6 +111,8 @@ export type ContextOptions = {
   sessionStart: HookConfig[];
   /** 名前と説明だけを節にする。本文は skill ツールで取りに行かせる */
   skills?: Skill[];
+  /** プロジェクト側の AGENTS.md を、本人が信頼したものとして載せるか */
+  trusted?: boolean;
 };
 
 /** 起動時に1回だけ集める。IO を伴うので Agent の外に置く */
@@ -101,6 +121,7 @@ export async function collectContext({
   mode,
   sessionStart,
   skills = [],
+  trusted = true,
 }: ContextOptions): Promise<PromptSection[]> {
   const sections: PromptSection[] = [];
 
@@ -109,7 +130,7 @@ export async function collectContext({
 
   sections.push({ heading: "環境", body: await environment(workspace) });
 
-  const memory = await projectMemory();
+  const memory = await projectMemory(trusted);
   if (memory)
     sections.push({ heading: "このプロジェクトの決まり", body: memory });
 

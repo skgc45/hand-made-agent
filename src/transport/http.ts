@@ -6,6 +6,7 @@ import { EventType, type ResumeEntry } from "@ag-ui/core";
 import { EventEncoder } from "@ag-ui/encoder";
 import type { AgentEvent } from "../agent/loop.js";
 import type { Sessions } from "../session/index.js";
+import { assertThreadId } from "../store/index.js";
 import type { Transport } from "./index.js";
 
 const PUBLIC = path.resolve(import.meta.dirname, "..", "..", "public");
@@ -31,15 +32,58 @@ type RunBody = {
   resume?: ResumeEntry[];
 };
 
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 async function readBody(req: http.IncomingMessage): Promise<RunBody> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY) throw new Error("リクエストが大きすぎます");
+    if (size > MAX_BODY) throw new HttpError(413, "リクエストが大きすぎます");
     chunks.push(chunk as Buffer);
   }
-  return JSON.parse(Buffer.concat(chunks).toString() || "{}") as RunBody;
+  let body: unknown;
+  try {
+    body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+  } catch {
+    throw new HttpError(400, "JSON として読めません");
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new HttpError(400, "body は JSON オブジェクトにしてください");
+  }
+  return body as RunBody;
+}
+
+function validateBody(body: RunBody): void {
+  if (body.threadId !== undefined) {
+    if (typeof body.threadId !== "string") {
+      throw new HttpError(400, "threadId は文字列にしてください");
+    }
+    try {
+      assertThreadId(body.threadId);
+    } catch (error) {
+      throw new HttpError(400, (error as Error).message);
+    }
+  }
+  if (body.runId !== undefined && typeof body.runId !== "string") {
+    throw new HttpError(400, "runId は文字列にしてください");
+  }
+  if (body.messages !== undefined && !Array.isArray(body.messages)) {
+    throw new HttpError(400, "messages は配列にしてください");
+  }
+  if (body.message !== undefined && typeof body.message !== "string") {
+    throw new HttpError(400, "message は文字列にしてください");
+  }
+  if (body.resume !== undefined && !Array.isArray(body.resume)) {
+    throw new HttpError(400, "resume は配列にしてください");
+  }
 }
 
 /**
@@ -93,6 +137,7 @@ export class HttpTransport implements Transport {
     res: http.ServerResponse,
   ) {
     const body = await readBody(req);
+    validateBody(body);
     const threadId: string = body.threadId ?? randomUUID();
     const runId: string | undefined = body.runId;
     const message: string = body.message ?? lastUserText(body.messages);
@@ -169,8 +214,13 @@ export class HttpTransport implements Transport {
 
       res.writeHead(404).end("not found");
     } catch (error) {
-      console.error(error);
-      if (!res.headersSent) res.writeHead(500);
+      const status = error instanceof HttpError ? error.status : 500;
+      if (status === 500) console.error(error);
+      if (!res.headersSent) {
+        res.writeHead(status, {
+          "Content-Type": "application/json; charset=utf-8",
+        });
+      }
       res.end(JSON.stringify({ error: (error as Error).message }));
     }
   }

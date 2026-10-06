@@ -10,9 +10,15 @@ import {
 import type { PromptSection } from "../agent/prompt.js";
 import type { JobQueue } from "../agent/subagent.js";
 import type { Profile } from "../profile/index.js";
-import type { Store, ThreadSummary } from "../store/index.js";
+import {
+  assertThreadId,
+  type Store,
+  type ThreadSummary,
+} from "../store/index.js";
 import { type Telemetry, toRow } from "../telemetry/index.js";
 import { MessageQueue } from "./queue.js";
+
+const MAX_LIVE = 32;
 
 export type SessionsConfig = {
   client: OpenAI;
@@ -30,6 +36,8 @@ export type SessionsConfig = {
   /** background で走っているサブエージェント。完了は steering / follow-up に合流する */
   jobs?: JobQueue;
   stream?: boolean;
+  /** 手元に持つ Agent の上限。超えたら最も長く使われていないものから手放す */
+  maxLive?: number;
   store: Store;
   telemetry?: Telemetry;
 };
@@ -63,8 +71,12 @@ export class Sessions {
   }
 
   async get(threadId: string): Promise<Agent> {
+    assertThreadId(threadId);
     let agent = this.live.get(threadId);
-    if (!agent) {
+    if (agent) {
+      this.live.delete(threadId);
+      this.live.set(threadId, agent);
+    } else {
       const queues = this.queuesFor(threadId);
       const {
         client,
@@ -151,8 +163,42 @@ export class Sessions {
       }
     } finally {
       this.active.delete(threadId);
+      this.evict();
       void telemetry?.flush();
     }
+  }
+
+  /**
+   * 保存は append 済みで、承認待ちの pending も store から復元できる。
+   * 上限を超えたぶんを、使われていない順に手放す。
+   * 走っている run・残っているキュー・走っている子があるスレッドは飛ばす
+   */
+  private evict(): void {
+    const max = this.config.maxLive ?? MAX_LIVE;
+    if (this.live.size <= max || this.config.jobs?.running()) return;
+    for (const threadId of this.live.keys()) {
+      if (this.live.size <= max) return;
+      if (this.active.has(threadId)) continue;
+      const q = this.queues.get(threadId);
+      if (q && (q.steering.size > 0 || q.followUp.size > 0)) continue;
+      this.live.delete(threadId);
+      this.queues.delete(threadId);
+      this.stopAsked.delete(threadId);
+    }
+  }
+
+  /** テスト用。使われた順（古い順）の threadId */
+  retainedIds(): string[] {
+    return [...this.live.keys()];
+  }
+
+  /** テスト用。解放されずに残っているスレッド数 */
+  retained(): { live: number; queues: number; stopAsked: number } {
+    return {
+      live: this.live.size,
+      queues: this.queues.size,
+      stopAsked: this.stopAsked.size,
+    };
   }
 
   list(): Promise<ThreadSummary[]> {

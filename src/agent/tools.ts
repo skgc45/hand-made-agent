@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type OpenAI from "openai";
+import { safeEnv } from "./env.js";
 import { insideRoot } from "./realpath.js";
 import type { Toolset } from "./toolset.js";
 
@@ -319,6 +320,7 @@ export function createFileTools(workspace: string): Toolset {
       try {
         const { stdout, stderr } = await exec("/bin/bash", ["-c", command], {
           cwd: ROOT,
+          env: safeEnv(),
           timeout: 30_000,
           maxBuffer: 1024 * 1024,
           signal,

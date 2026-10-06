@@ -106,3 +106,78 @@ test("GET /threads にも Host の検査が掛かる", async () => {
     await transport.stop();
   }
 });
+
+function post(
+  port: number,
+  body: string | Buffer,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        port,
+        host: LOCAL,
+        method: "POST",
+        path: "/",
+        headers: {
+          host: `localhost:${port}`,
+          "content-type": "application/json",
+        },
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => {
+          data += c;
+        });
+        res.on("end", () =>
+          resolve({ status: res.statusCode ?? 0, body: data }),
+        );
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+test("POST の不正な body は 4xx を {error} で返す", async () => {
+  const port = await freePort();
+  const transport = new HttpTransport(port);
+  const sessions = {
+    list: async () => [],
+    steer: () => false,
+    run: async function* () {},
+  } as unknown as Sessions;
+  void transport.start(sessions);
+  try {
+    let ready = 0;
+    for (let i = 0; i < 50 && ready === 0; i++) {
+      try {
+        ready = await get(port, `localhost:${port}`);
+      } catch {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+    const cases: [string, string | Buffer, number][] = [
+      ["不正な JSON", "{", 400],
+      ["null", "null", 400],
+      ["配列", "[]", 400],
+      ["文字列", '"x"', 400],
+      ["threadId が数値", '{"threadId":1}', 400],
+      ["threadId がオブジェクト", '{"threadId":{}}', 400],
+      ["threadId に使えない文字", '{"threadId":"../x"}', 400],
+      ["message が数値", '{"message":1}', 400],
+      ["resume が配列でない", '{"resume":{}}', 400],
+      ["runId が数値", '{"runId":1}', 400],
+      ["messages が配列でない", '{"messages":"x"}', 400],
+      ["1MB 超", Buffer.alloc(1_000_001, "a"), 413],
+    ];
+    for (const [name, body, want] of cases) {
+      const res = await post(port, body);
+      assert.equal(res.status, want, name);
+      assert.equal(typeof JSON.parse(res.body).error, "string", name);
+    }
+    const ok = await post(port, '{"threadId":"ok_1","message":"hi"}');
+    assert.equal(ok.status, 200);
+  } finally {
+    await transport.stop();
+  }
+});
