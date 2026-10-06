@@ -15,16 +15,6 @@ import { parseArgs, promisify } from "node:util";
 import { EventType } from "@ag-ui/core";
 import type { withSubagents } from "./agent/subagent.js";
 import {
-  APPROVAL,
-  MODEL,
-  NEEDS_TRUST,
-  PROFILE,
-  TELEMETRY,
-  TELEMETRY_URL,
-  TRIM,
-  WORKSPACE,
-} from "./config.js";
-import {
   compareSplit,
   type EvalRecord,
   type Rule,
@@ -33,9 +23,6 @@ import {
   score,
   verdict,
 } from "./eval/compare.js";
-import { buildSessions, loadAssets } from "./runtime.js";
-import { MemoryStore } from "./store/memory.js";
-import { createTelemetry } from "./telemetry/index.js";
 
 type EvalCase = {
   name: string;
@@ -44,7 +31,7 @@ type EvalCase = {
   workspace?: string;
   /** hillclimbing で、見ながら直す train か、直すときに見ない test か */
   split?: Split;
-  /** 終わったあと workspace の写しで走らせるコマンド。終了コード 0 で合格。元の場所は $HMA_EVAL_SOURCE */
+  /** 終わったあと workspace の写しで走らせるコマンド。終了コード 0 で合格。流し始めの写しは $HMA_EVAL_SOURCE */
   check?: string;
   expect?: {
     /** 1回以上実行されていてほしいツール */
@@ -124,6 +111,21 @@ if (opts.compare) {
   console.log(`\n判定: ${verdict(before, after, rule)}`);
   process.exit(0);
 }
+
+// --compare は記録を比べるだけ。設定の検証（API キーなど）で止まらないよう、ここから先で読む
+const {
+  APPROVAL,
+  MODEL,
+  NEEDS_TRUST,
+  PROFILE,
+  TELEMETRY,
+  TELEMETRY_URL,
+  TRIM,
+  WORKSPACE,
+} = await import("./config.js");
+const { buildSessions, loadAssets } = await import("./runtime.js");
+const { MemoryStore } = await import("./store/memory.js");
+const { createTelemetry } = await import("./telemetry/index.js");
 
 const repeat = Number(opts.repeat);
 if (!Number.isInteger(repeat) || repeat < 1) {
@@ -214,7 +216,7 @@ async function runCheck(
   }
 }
 
-async function runOnce(c: EvalCase): Promise<Run> {
+async function runOnce(c: EvalCase, source: string): Promise<Run> {
   const run: Run = {
     outcome: "完走",
     failures: [],
@@ -236,10 +238,7 @@ async function runOnce(c: EvalCase): Promise<Run> {
     await mkdtemp(path.join(os.tmpdir(), `hma-eval-${c.name}-`)),
   );
   try {
-    await cp(path.resolve(c.workspace ?? WORKSPACE), copy, {
-      recursive: true,
-      filter: (src) => path.basename(src) !== ".git",
-    });
+    await cp(source, copy, { recursive: true });
     // ask を渡さないので、承認が要るツールに当たると -p と同じく Interrupt で止まる
     const built = await buildSessions(assets, {
       profile: c.profile ?? PROFILE,
@@ -299,11 +298,7 @@ async function runOnce(c: EvalCase): Promise<Run> {
     run.failures.push(`入力トークン ${run.promptTokens} > ${max}`);
   }
   if (c.check && run.outcome !== "エラー") {
-    const failed = await runCheck(
-      c.check,
-      copy,
-      path.resolve(c.workspace ?? WORKSPACE),
-    );
+    const failed = await runCheck(c.check, copy, source);
     if (failed) run.failures.push(failed);
   }
 
@@ -321,16 +316,38 @@ for (const c of cases.filter((c) => c.check)) {
 }
 console.error("");
 
+const hitQuota = (run: Run) => run.failures.some((f) => f.startsWith("429"));
+
 // 無料枠は 5 RPM。並列にすると自分で 429 を踏むので1件ずつ流す
 const results: { c: EvalCase; runs: Run[] }[] = [];
+let quota = false;
 try {
   for (const c of cases) {
+    // 流している間に元の workspace が変わっても、全回を同じ状態から始め、同じ状態と比べる
+    const source = await realpath(
+      await mkdtemp(path.join(os.tmpdir(), `hma-eval-${c.name}-source-`)),
+    );
     const runs: Run[] = [];
-    for (let i = 1; i <= repeat; i++) {
-      console.error(`  ${c.name} ${i}/${repeat} ...`);
-      runs.push(await runOnce(c));
+    try {
+      await cp(path.resolve(c.workspace ?? WORKSPACE), source, {
+        recursive: true,
+        filter: (src) => path.basename(src) !== ".git",
+      });
+      for (let i = 1; i <= repeat && !quota; i++) {
+        console.error(`  ${c.name} ${i}/${repeat} ...`);
+        const run = await runOnce(c, source);
+        runs.push(run);
+        // リトライしても 429 が残るなら、残りも同じ 429 で落ちて枠も時間も無駄になる
+        quota = hitQuota(run);
+      }
+    } finally {
+      await rm(source, { recursive: true, force: true });
     }
     results.push({ c, runs });
+    if (quota) {
+      console.error("  429 で落ちたので、残りは流さずに止めます");
+      break;
+    }
   }
 } finally {
   await telemetry.close();
@@ -409,11 +426,14 @@ if (opts.out) {
     cases: results.map(({ c, runs }) => ({
       name: c.name,
       split: c.split,
-      runs: runs.map((r) => ({
-        passed: r.failures.length === 0,
-        promptTokens: r.promptTokens,
-        tools: Object.fromEntries(r.tools),
-      })),
+      // 429 の回はお題の結果ではない。残すと --compare が「戻す」を出す
+      runs: runs
+        .filter((r) => !hitQuota(r))
+        .map((r) => ({
+          passed: r.failures.length === 0,
+          promptTokens: r.promptTokens,
+          tools: Object.fromEntries(r.tools),
+        })),
     })),
   };
   try {
