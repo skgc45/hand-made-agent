@@ -18,6 +18,8 @@ export type McpServerConfig = {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  /** deferred のとき、ツールは tools に載せず tool_search で見つけさせる */
+  expose?: "all" | "deferred";
 };
 
 type Pending = {

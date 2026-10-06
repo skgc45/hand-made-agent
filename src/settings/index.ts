@@ -425,7 +425,7 @@ export async function saveAllowRule(rule: string): Promise<string> {
   return display(LOCAL);
 }
 
-/** MCP サーバの設定。command だけ必須で、args と env は任意 */
+/** MCP サーバの設定。command だけ必須で、args と env と expose は任意 */
 function readMcpServers(
   file: string,
   value: unknown,
@@ -458,7 +458,16 @@ function readMcpServers(
           )
         : undefined;
 
-    servers[name] = { command: entry.command, args, env };
+    if (
+      entry.expose !== undefined &&
+      entry.expose !== "all" &&
+      entry.expose !== "deferred"
+    ) {
+      warn(file, `mcpServers.${name}.expose は "all" か "deferred" です`);
+    }
+    const expose = entry.expose === "deferred" ? "deferred" : undefined;
+
+    servers[name] = { command: entry.command, args, env, expose };
   }
   return servers;
 }

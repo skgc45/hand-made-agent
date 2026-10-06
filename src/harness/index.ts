@@ -45,9 +45,11 @@ export type Hooks = {
 };
 
 function toolNames(profile: Profile): string[] {
-  return profile.toolset.tools
+  const names = profile.toolset.tools
     .filter((tool) => tool.type === "function")
     .map((tool) => tool.function.name);
+  // 遅延公開で後から tools に入るツールも、plan で止める対象に入れる
+  return [...new Set([...names, ...Object.keys(profile.kinds)])];
 }
 
 /**

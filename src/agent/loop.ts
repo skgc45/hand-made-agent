@@ -315,14 +315,17 @@ export class Agent {
   private charsPerToken = 3;
   private totalPromptTokens = 0;
 
-  private readonly toolsChars: number;
   private readonly prompt: SystemPrompt;
+
+  /** 遅延公開で tools は実行中に増えるので、毎回数える */
+  private get toolsChars(): number {
+    return JSON.stringify(this.config.toolset.tools).length;
+  }
 
   private readonly trim: TrimMode;
 
   constructor(private readonly config: AgentConfig) {
     this.trim = parseTrimMode(config.trim);
-    this.toolsChars = JSON.stringify(config.toolset.tools).length;
     this.threadId = config.threadId ?? randomUUID();
     this.prompt = new SystemPrompt(config.system);
     for (const { heading, body } of config.sections ?? []) {
