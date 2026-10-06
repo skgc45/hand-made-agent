@@ -50,6 +50,11 @@ export function createFileTools(workspace: string): Toolset {
               type: "string",
               description: `${WORKSPACE} からの相対パス`,
             },
+            offset: {
+              type: "integer",
+              description:
+                "読み始める行（1始まり）。長くて切られたファイルの続きを読むときに使う",
+            },
           },
           required: ["path"],
         },
@@ -270,8 +275,17 @@ export function createFileTools(workspace: string): Toolset {
         .join("\n");
     },
 
-    async read_file({ path: rel }) {
-      return await fs.readFile(resolveInRoot(rel), "utf-8");
+    async read_file({ path: rel, offset }) {
+      const content = await fs.readFile(resolveInRoot(rel), "utf-8");
+      const start = Number.isInteger(offset) && offset > 1 ? offset : 1;
+      if (start === 1) return content;
+      const lines = content.split("\n");
+      // 末尾の改行のあとの空文字は行に数えない
+      const total = content.endsWith("\n") ? lines.length - 1 : lines.length;
+      if (start > total) {
+        return `エラー: offset ${start} はファイルの行数 ${total} を超えています`;
+      }
+      return lines.slice(start - 1).join("\n");
     },
 
     async write_file({ path: rel, content }) {

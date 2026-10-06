@@ -258,3 +258,41 @@ describe("compareTouched", () => {
     );
   });
 });
+
+describe("合格率の比較（u）", () => {
+  const passes = (yes: number, n: number): EvalRecord => ({
+    model: "m",
+    createdAt: "",
+    cases: [
+      {
+        name: "a",
+        split: "train",
+        runs: Array.from({ length: n }, (_, i) => ({
+          passed: i < yes,
+          promptTokens: 100,
+        })),
+      },
+    ],
+  });
+
+  it("9回中 0 → 9 は良くなった", () => {
+    assert.equal(
+      compareSplit(passes(0, 9), passes(9, 9), "train"),
+      "良くなった",
+    );
+  });
+
+  it("9回中 0 → 4 は検定を通らず、揺れの範囲内", () => {
+    assert.equal(
+      compareSplit(passes(0, 9), passes(4, 9), "train"),
+      "揺れの範囲内",
+    );
+  });
+
+  it("range ではステップ22 のとおり1回の差でも動いたと見る", () => {
+    assert.equal(
+      compareSplit(passes(0, 9), passes(1, 9), "train", "range"),
+      "良くなった",
+    );
+  });
+});

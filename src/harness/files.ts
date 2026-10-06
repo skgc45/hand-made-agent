@@ -128,7 +128,7 @@ const READ_MAX_LINES = 2000;
 const READ_MAX_CHARS = 80000;
 
 export function truncateResult(): AfterToolCall {
-  return async ({ name, result }) => {
+  return async ({ name, arguments: args, result }) => {
     const reading = FULL_READS.has(name);
     const maxLines = reading ? READ_MAX_LINES : MAX_LINES;
     const maxChars = reading ? READ_MAX_CHARS : MAX_CHARS;
@@ -154,10 +154,15 @@ export function truncateResult(): AfterToolCall {
       dropped > 0
         ? `残り ${dropped} 行`
         : `残り ${result.length - kept.length} 文字`;
+    const offset = (parseArgs(args) as { offset?: unknown } | undefined)
+      ?.offset;
+    const base =
+      Number.isInteger(offset) && Number(offset) > 1 ? Number(offset) : 1;
+    // 続きを bash で案内すると、bash を禁じられた依頼で指示とぶつかる（ステップ25）
     const how = !reading
       ? "grep や bash で絞ってください"
       : dropped > 0
-        ? `sed -n '${kept.split("\n").length + 1},$p' で続きを読めます`
+        ? `read_file に offset: ${base + kept.split("\n").length} を渡すと続きを読めます`
         : `tail -c +${kept.length + 1} で続きを読めます`;
 
     return {
