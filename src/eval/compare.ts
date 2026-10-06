@@ -1,7 +1,8 @@
 import type { Call } from "./behavior.js";
 import { fisherExact, mannWhitney } from "./stats.js";
 
-export type Split = "train" | "test";
+/** guard は見張り。下がったら戻すが、上がっても採用の根拠にしない */
+export type Split = "train" | "test" | "guard";
 
 /** hma eval --out が書き出す1回分 */
 export type RunRecord = {
@@ -174,6 +175,12 @@ export function verdict(
       score(before, split).total === 0 || score(after, split).total === 0,
   );
   if (empty || !sameCases(before, after)) return "比べられない";
+
+  const guarded =
+    score(before, "guard").total > 0 && score(after, "guard").total > 0;
+  if (guarded && compareSplit(before, after, "guard", rule) === "悪くなった") {
+    return "戻す";
+  }
 
   const train = compareSplit(before, after, "train", rule);
   if (train === "悪くなった") return "戻す";

@@ -296,3 +296,72 @@ describe("合格率の比較（u）", () => {
     );
   });
 });
+
+describe("guard（見張り）", () => {
+  const withGuard = (
+    train: boolean[],
+    test: boolean[],
+    guard: boolean[],
+  ): EvalRecord => {
+    const runs = (flags: boolean[]) =>
+      flags.map((passed) => ({ passed, promptTokens: 100 }));
+    return {
+      model: "m",
+      createdAt: "",
+      cases: [
+        { name: "a", split: "train", runs: runs(train) },
+        { name: "b", split: "test", runs: runs(test) },
+        { name: "g", split: "guard", runs: runs(guard) },
+      ],
+    };
+  };
+  const nine = (yes: number) => Array.from({ length: 9 }, (_, i) => i < yes);
+
+  it("train と test が良くなっても、guard が悪くなれば戻す", () => {
+    assert.equal(
+      verdict(
+        withGuard(nine(0), nine(0), nine(9)),
+        withGuard(nine(9), nine(9), nine(0)),
+      ),
+      "戻す",
+    );
+  });
+
+  it("guard が変わらなければ train と test で決まる", () => {
+    assert.equal(
+      verdict(
+        withGuard(nine(0), nine(0), nine(9)),
+        withGuard(nine(9), nine(9), nine(9)),
+      ),
+      "採用",
+    );
+  });
+
+  it("guard のトークンだけが悪くなっても戻す", () => {
+    const before = withGuard(nine(0), nine(0), nine(9));
+    const after = withGuard(nine(9), nine(9), nine(9));
+    for (const run of after.cases[2].runs) run.promptTokens = 1000;
+    assert.equal(verdict(before, after), "戻す");
+  });
+
+  it("guard が片方の記録にしか無ければ比べられない", () => {
+    const before = withGuard(nine(0), nine(0), nine(9));
+    const after = withGuard(nine(9), nine(9), nine(9));
+    after.cases.pop();
+    assert.equal(verdict(before, after), "比べられない");
+  });
+
+  it("guard の無い記録どうしは、これまでどおり train と test で決まる", () => {
+    const before = withGuard(nine(0), nine(0), nine(9));
+    const after = withGuard(nine(9), nine(9), nine(0));
+    before.cases.pop();
+    after.cases.pop();
+    assert.equal(verdict(before, after), "採用");
+  });
+
+  it("guard は test の合格率に混ざらない", () => {
+    const before = withGuard(nine(0), nine(0), nine(9));
+    const after = withGuard(nine(0), nine(5), nine(9));
+    assert.equal(compareSplit(before, after, "test"), "良くなった");
+  });
+});
