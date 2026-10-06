@@ -163,6 +163,11 @@ export class Sessions {
       }
     } finally {
       this.active.delete(threadId);
+      if (agent.halted) {
+        this.live.delete(threadId);
+        this.queues.delete(threadId);
+        this.stopAsked.delete(threadId);
+      }
       this.evict();
       void telemetry?.flush();
     }

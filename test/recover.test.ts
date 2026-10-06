@@ -175,3 +175,84 @@ describe("圧縮のリトライ", () => {
     assert.ok(!events.some((e) => e.type === "RUN_ERROR"));
   });
 });
+
+describe("履歴の保存が失敗したとき", () => {
+  function run(
+    config: Partial<ConstructorParameters<typeof Agent>[0]>,
+    executed: string[],
+  ) {
+    const agent = new Agent({
+      client: recordingClient([]),
+      model: "fake",
+      system: "test",
+      toolset: {
+        tools: [],
+        async execute(name) {
+          executed.push(name);
+          return "ok";
+        },
+      },
+      contextLimit: 100000,
+      trim: "none",
+      stream: false,
+      ...config,
+    });
+    return (async () => {
+      const events = [];
+      for await (const event of agent.run("やって")) events.push(event);
+      return events;
+    })();
+  }
+
+  it("append が落ちたら RUN_ERROR で止まり、ツールは実行しない", async () => {
+    const executed: string[] = [];
+    let calls = 0;
+    const events = await run(
+      {
+        append: async () => {
+          calls++;
+          throw new Error("disk full");
+        },
+      },
+      executed,
+    );
+
+    const error = events.find((e) => e.type === "RUN_ERROR");
+    assert.match(
+      (error as { message: string }).message,
+      /履歴の保存に失敗したので止めます: disk full/,
+    );
+    assert.equal(events.at(-1)?.type, "RUN_ERROR");
+    assert.deepEqual(executed, []);
+    assert.equal(calls, 1, "エラー処理の中で再び append しない");
+  });
+
+  it("ツール実行前の attempt の保存で落ちたら、そのツールは走らない", async () => {
+    const executed: string[] = [];
+    const events = await run(
+      {
+        append: async (entry) => {
+          if (entry.kind === "attempt") throw new Error("locked");
+        },
+      },
+      executed,
+    );
+
+    assert.equal(events.at(-1)?.type, "RUN_ERROR");
+    assert.deepEqual(executed, []);
+  });
+
+  it("getSteeringMessages が落ちたら黙って捨てずに止まる", async () => {
+    const events = await run(
+      {
+        getSteeringMessages: async () => {
+          throw new Error("queue broken");
+        },
+      },
+      [],
+    );
+
+    const error = events.find((e) => e.type === "RUN_ERROR");
+    assert.match((error as { message: string }).message, /queue broken/);
+  });
+});

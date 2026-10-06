@@ -151,6 +151,8 @@ const ABORTED = "中断されました";
 const ABORTED_RUNNING =
   "中断されました。このツールは実行中だったので、途中まで走ったかもしれません。";
 
+class HaltError extends Error {}
+
 /** 投げられるのは Error とは限らない。message が無いものを undefined にしない */
 export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -426,14 +428,23 @@ export class Agent {
     if (next.length !== this.messages.length) this.replace(next);
   }
 
+  #halted = false;
+  private haltRun?: () => void;
+
+  /** 保存に失敗した。メモリが store より進んでいるので、この Agent は捨てて作り直す */
+  get halted(): boolean {
+    return this.#halted;
+  }
+
   private async poll(
     which: "getSteeringMessages" | "getFollowUpMessages",
   ): Promise<string[]> {
     try {
       return (await this.config[which]?.()) ?? [];
     } catch (error) {
-      console.error(`${which} が失敗:`, error);
-      return [];
+      throw new HaltError(
+        `指示キューの取り出し（${which}）に失敗したので止めます: ${messageOf(error)}`,
+      );
     }
   }
 
@@ -441,7 +452,9 @@ export class Agent {
     try {
       await this.config.append?.(entry);
     } catch (error) {
-      console.error("追記に失敗:", error);
+      throw new HaltError(
+        `履歴の保存に失敗したので止めます: ${messageOf(error)}`,
+      );
     }
   }
 
@@ -456,20 +469,38 @@ export class Agent {
     userInput: string,
     runId: string = randomUUID(),
     resume?: ResumeEntry[],
-    signal?: AbortSignal,
+    outerSignal?: AbortSignal,
   ): AsyncGenerator<AgentEvent> {
+    if (this.#halted) {
+      throw new Error(
+        "履歴の保存に失敗した Agent は使えません。store から作り直してください",
+      );
+    }
+    // 保存に失敗したとき、起動済みの並列ツールも止めるための内側の signal
+    const controller = new AbortController();
+    const forward = () => controller.abort();
+    if (outerSignal?.aborted) forward();
+    outerSignal?.addEventListener("abort", forward, { once: true });
+    this.haltRun = () => controller.abort();
+    const signal = controller.signal;
     let finished = false;
     try {
       yield* this.runInner(userInput, runId, resume, signal);
       finished = true;
     } finally {
+      outerSignal?.removeEventListener("abort", forward);
+      this.haltRun = undefined;
       // 受け取る側が途中で抜けると、yield で止まったまま結果の無い tool_calls が残る。
       // 同じプロセスで次の run に進むと 400 になるので、落ちて復元したときと同じ規則で埋める
       if (!finished) {
         this.recover();
         // 再開した run はメモリの承認待ちを先に消している。ログにも揃えないと、
         // 別のプロセスで復元したとき承認待ちが戻り、埋めたはずの tool_calls が未回答のまま残る
-        await this.record({ kind: "pending", pending: this.pending ?? null });
+        // 受け取る側は既に抜けている。ここで投げても届け先が無い
+        await this.record({
+          kind: "pending",
+          pending: this.pending ?? null,
+        }).catch(() => {});
       }
     }
   }
@@ -635,8 +666,13 @@ export class Agent {
         runId,
       };
     } catch (error) {
-      // 中断は異常終了ではない。pi の agent_end と同じく正常に閉じる
-      if (!signal?.aborted) {
+      // 中断は異常終了ではない。pi の agent_end と同じく正常に閉じる。
+      // ただし保存の失敗は中断中でも握りつぶさない
+      if (error instanceof HaltError) {
+        this.#halted = true;
+        this.haltRun?.();
+      }
+      if (!signal?.aborted || error instanceof HaltError) {
         yield {
           type: EventType.RUN_ERROR,
           message: messageOf(error),
