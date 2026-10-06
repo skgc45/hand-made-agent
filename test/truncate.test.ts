@@ -6,11 +6,11 @@ import { truncateResult } from "../src/harness/files.js";
 const lines = (n: number) =>
   Array.from({ length: n }, (_, i) => `行 ${i + 1}`).join("\n");
 
-function context(name: string, result: string): ToolResultContext {
+function context(name: string, result: string, args = "{}"): ToolResultContext {
   return {
     toolCallId: "c1",
     name,
-    arguments: "{}",
+    arguments: args,
     messages: [],
     result,
     blocked: false,
@@ -37,7 +37,7 @@ describe("ツール結果の切り詰め", () => {
 
     assert.ok(out?.content);
     assert.match(out.content, /残り 500 行/);
-    assert.match(out.content, /sed -n '2001,\$p'/);
+    assert.match(out.content, /read_file に offset: 2001 を渡す/);
   });
 
   it("文字数で切っても、案内する行番号は半端な行を指さない", async () => {
@@ -52,8 +52,17 @@ describe("ツール結果の切り詰め", () => {
       kept.every((line) => line.length === 99),
       "行の途中で切れている",
     );
-    assert.match(out.content, new RegExp(`sed -n '${kept.length + 1},\\$p'`));
+    assert.match(out.content, new RegExp(`offset: ${kept.length + 1} を渡す`));
     assert.match(out.content, new RegExp(`残り ${2500 - kept.length} 行`));
+  });
+
+  it("offset から読んだ結果を切ったときは、ファイルの行番号で案内する", async () => {
+    const out = await truncateResult()(
+      context("read_file", lines(2500), '{"path":"a.ts","offset":2001}'),
+    );
+
+    assert.ok(out?.content);
+    assert.match(out.content, /read_file に offset: 4001 を渡す/);
   });
 
   it("1行が長いファイルは、行ではなく文字で案内する", async () => {
