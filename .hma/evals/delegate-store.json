@@ -4,5 +4,5 @@
   "workspace": "src",
   "split": "train",
   "check": "diff -r \"$HMA_EVAL_SOURCE\" .",
-  "expect": { "tools": ["explore"] }
+  "expect": { "tools": ["explore"], "untouched": ["store"] }
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   compareSplit,
+  compareTouched,
   type EvalRecord,
   median,
   score,
@@ -217,5 +218,43 @@ describe("U 検定の判定", () => {
     const after = record(nine(1000), [1]);
     assert.equal(compareSplit(before, after, "train", "range"), "揺れの範囲内");
     assert.equal(compareSplit(before, after, "train", "u"), "良くなった");
+  });
+});
+
+describe("compareTouched", () => {
+  const touched = (flags: (boolean | undefined)[]): EvalRecord => ({
+    model: "m",
+    createdAt: "",
+    cases: [
+      {
+        name: "a",
+        split: "train",
+        runs: flags.map((touched) => ({
+          passed: true,
+          promptTokens: 1,
+          touched,
+        })),
+      },
+    ],
+  });
+  const times = (yes: number, n: number) =>
+    Array.from({ length: n }, (_, i) => i < yes);
+
+  it("9回中6回 → 1回なら良くなった、2回 → 2回なら揺れの範囲内", () => {
+    assert.equal(
+      compareTouched(touched(times(6, 9)), touched(times(1, 9)), "train"),
+      "良くなった",
+    );
+    assert.equal(
+      compareTouched(touched(times(2, 9)), touched(times(2, 9)), "train"),
+      "揺れの範囲内",
+    );
+  });
+
+  it("判定していない記録とは比べない", () => {
+    assert.equal(
+      compareTouched(touched([undefined]), touched(times(1, 9)), "train"),
+      undefined,
+    );
   });
 });

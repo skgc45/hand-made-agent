@@ -1,4 +1,5 @@
-import { mannWhitney } from "./stats.js";
+import type { Call } from "./behavior.js";
+import { fisherExact, mannWhitney } from "./stats.js";
 
 export type Split = "train" | "test";
 
@@ -8,6 +9,9 @@ export type RunRecord = {
   promptTokens: number;
   /** 親が実行したツールと回数。ステップ22 の記録には無い */
   tools?: Record<string, number>;
+  /** お題の expect.untouched に親が手を出したか。ステップ23 までの記録には無い */
+  touched?: boolean;
+  calls?: Call[];
 };
 
 export type CaseRecord = {
@@ -63,6 +67,34 @@ export function score(record: EvalRecord, split: Split): SplitScore {
       0,
     ),
   };
+}
+
+/** expect.untouched に手を出した回の数。judged は判定したお題の回数（untouched の無いお題と古い記録は数えない） */
+export function touchedScore(
+  record: EvalRecord,
+  split: Split,
+): { touched: number; judged: number } {
+  const runs = casesOf(record, split)
+    .flatMap((c) => c.runs)
+    .filter((r) => r.touched !== undefined);
+  return { touched: runs.filter((r) => r.touched).length, judged: runs.length };
+}
+
+/** 手を出した回の割合を Fisher の正確検定で比べる。判定した回が無ければ undefined */
+export function compareTouched(
+  before: EvalRecord,
+  after: EvalRecord,
+  split: Split,
+): Change | undefined {
+  const b = touchedScore(before, split);
+  const a = touchedScore(after, split);
+  if (b.judged === 0 || a.judged === 0) return undefined;
+  if (fisherExact(b.touched, b.judged, a.touched, a.judged) >= SIGNIFICANCE) {
+    return "揺れの範囲内";
+  }
+  return a.touched / a.judged < b.touched / b.judged
+    ? "良くなった"
+    : "悪くなった";
 }
 
 /**

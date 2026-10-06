@@ -14,13 +14,16 @@ import path from "node:path";
 import { parseArgs, promisify } from "node:util";
 import { EventType } from "@ag-ui/core";
 import type { withSubagents } from "./agent/subagent.js";
+import { type Call, touchedCalls } from "./eval/behavior.js";
 import {
   compareSplit,
+  compareTouched,
   type EvalRecord,
   type Rule,
   type Split,
   sameCases,
   score,
+  touchedScore,
   verdict,
 } from "./eval/compare.js";
 
@@ -36,6 +39,8 @@ type EvalCase = {
   expect?: {
     /** 1回以上実行されていてほしいツール */
     tools?: string[];
+    /** 親に読んでほしくない範囲（サブエージェントに任せた先）。合否には入れず、手を出した回を数える */
+    untouched?: string[];
     /** 入力トークンの累計の上限 */
     maxPromptTokens?: number;
   };
@@ -45,6 +50,9 @@ type Run = {
   outcome: "完走" | "承認待ち" | "エラー";
   failures: string[];
   tools: Map<string, number>;
+  calls: Call[];
+  /** expect.untouched に手を出した呼び出し。untouched が無いお題では undefined */
+  touched?: Call[];
   modelCalls: number;
   promptTokens: number;
   completionTokens: number;
@@ -98,14 +106,20 @@ if (opts.compare) {
     console.error("前後でお題（名前と split）の顔ぶれが違います");
   }
   console.log(
-    "| 区分 | 合格（前 → 後） | 入力tok の中央値の合計（前 → 後） | 変化 |",
+    "| 区分 | 合格（前 → 後） | 入力tok の中央値の合計（前 → 後） | 変化 | 手出し（前 → 後） | 変化 |",
   );
-  console.log("|---|---|---|---|");
+  console.log("|---|---|---|---|---|---|");
   for (const split of ["train", "test"] as const) {
     const b = score(before, split);
     const a = score(after, split);
+    const tb = touchedScore(before, split);
+    const ta = touchedScore(after, split);
+    const touched =
+      tb.judged && ta.judged
+        ? `${tb.touched}/${tb.judged} → ${ta.touched}/${ta.judged} | ${compareTouched(before, after, split)}`
+        : "- | -";
     console.log(
-      `| ${split} | ${b.passed}/${b.total} → ${a.passed}/${a.total} | ${b.tokens} → ${a.tokens} | ${b.total && a.total ? compareSplit(before, after, split, rule) : "-"} |`,
+      `| ${split} | ${b.passed}/${b.total} → ${a.passed}/${a.total} | ${b.tokens} → ${a.tokens} | ${b.total && a.total ? compareSplit(before, after, split, rule) : "-"} | ${touched} |`,
     );
   }
   console.log(`\n判定: ${verdict(before, after, rule)}`);
@@ -150,6 +164,15 @@ async function loadCases(only: string[]): Promise<EvalCase[]> {
       }
       if (body.split !== undefined && !["train", "test"].includes(body.split)) {
         throw new Error(`${f}: split は train か test: ${body.split}`);
+      }
+      // "." や ".." を書くと全部の呼び出しが手出しになる
+      const bad = body.expect?.untouched?.find(
+        (u) =>
+          typeof u !== "string" ||
+          ["", ".", ".."].includes(path.normalize(u).split(path.sep)[0]),
+      );
+      if (bad !== undefined) {
+        throw new Error(`${f}: untouched は workspace の中の範囲: ${bad}`);
       }
       return { ...body, name: path.basename(f, ".json") };
     }),
@@ -221,6 +244,7 @@ async function runOnce(c: EvalCase, source: string): Promise<Run> {
     outcome: "完走",
     failures: [],
     tools: new Map(),
+    calls: [],
     modelCalls: 0,
     promptTokens: 0,
     completionTokens: 0,
@@ -272,6 +296,7 @@ async function runOnce(c: EvalCase, source: string): Promise<Run> {
           if (value.decision === "run") {
             const n = String(value.tool);
             run.tools.set(n, (run.tools.get(n) ?? 0) + 1);
+            run.calls.push({ tool: n, arguments: String(value.arguments) });
           }
           if (value.decision === "ask") run.asked++;
           if (value.decision === "block") run.blocked++;
@@ -292,6 +317,10 @@ async function runOnce(c: EvalCase, source: string): Promise<Run> {
   if (run.outcome === "承認待ち") run.failures.push("承認待ちで止まった");
   for (const tool of c.expect?.tools ?? []) {
     if (!run.tools.has(tool)) run.failures.push(`${tool} を実行していない`);
+  }
+  // 途中で止まった回は呼び出しが揃っていないので、手出しの分母に入れない
+  if (c.expect?.untouched && run.outcome === "完走") {
+    run.touched = touchedCalls(run.calls, c.expect.untouched, copy);
   }
   const max = c.expect?.maxPromptTokens;
   if (max !== undefined && run.promptTokens > max) {
@@ -377,6 +406,7 @@ const header = [
   "名前",
   "合格",
   "ツール（1回あたり）",
+  "手出し",
   "モデル",
   "入力tok",
   "出力tok",
@@ -394,6 +424,9 @@ for (const { c, runs } of results) {
     c.name,
     `${passed}/${runs.length}`,
     toolsOf(runs),
+    c.expect?.untouched
+      ? `${runs.filter((r) => r.touched?.length).length}/${runs.filter((r) => r.touched).length}`
+      : "-",
     spread(runs.map((r) => r.modelCalls)),
     spread(runs.map((r) => r.promptTokens)),
     spread(runs.map((r) => r.completionTokens)),
@@ -419,6 +452,17 @@ for (const { c, runs } of results) {
     console.log(`  写し: ${r.kept}`);
   });
 }
+for (const { c, runs } of results) {
+  runs.forEach((r, i) => {
+    if (!r.touched?.length || !c.expect?.untouched) return;
+    console.log(
+      `\n${c.name} ${i + 1}回目: ${c.expect.untouched.join(", ")} に手を出した`,
+    );
+    for (const call of r.touched) {
+      console.log(`  - ${call.tool} ${call.arguments}`);
+    }
+  });
+}
 if (opts.out) {
   const record: EvalRecord = {
     model: MODEL,
@@ -433,6 +477,8 @@ if (opts.out) {
           passed: r.failures.length === 0,
           promptTokens: r.promptTokens,
           tools: Object.fromEntries(r.tools),
+          touched: r.touched ? r.touched.length > 0 : undefined,
+          calls: r.calls,
         })),
     })),
   };
