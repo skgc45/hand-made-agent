@@ -2,6 +2,10 @@
 export class MessageQueue {
   private items: string[] = [];
 
+  get size(): number {
+    return this.items.length;
+  }
+
   push(text: string): void {
     this.items.push(text);
   }
