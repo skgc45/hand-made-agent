@@ -34,11 +34,13 @@ type EvalCase = {
   workspace?: string;
   /** hillclimbing で、見ながら直す train か、直すときに見ない test か */
   split?: Split;
-  /** 終わったあと workspace の写しで走らせるコマンド。終了コード 0 で合格。流し始めの写しは $HMA_EVAL_SOURCE */
+  /** 終わったあと workspace の写しで走らせるコマンド。終了コード 0 で合格。流し始めの写しは $HMA_EVAL_SOURCE、最後の答えのファイルは $HMA_EVAL_ANSWER */
   check?: string;
   expect?: {
     /** 1回以上実行されていてほしいツール */
     tools?: string[];
+    /** 実行してほしくないツール。1回でも実行したら NG */
+    forbidTools?: string[];
     /** 親に読んでほしくない範囲（サブエージェントに任せた先）。合否には入れず、手を出した回を数える */
     untouched?: string[];
     /** 入力トークンの累計の上限 */
@@ -62,6 +64,8 @@ type Run = {
   /** 429 などのリトライで寝ていた秒 */
   waited: number;
   seconds: number;
+  /** 最後のアシスタントの発言 */
+  answer: string;
   /** NG のときだけ残す workspace の写し */
   kept?: string;
 };
@@ -207,6 +211,7 @@ async function runCheck(
   command: string,
   cwd: string,
   source: string,
+  answer: string,
 ): Promise<string | null> {
   // check は .hma に書かれた任意のコマンド。API キーまでは見せない
   const env = { ...process.env };
@@ -217,7 +222,7 @@ async function runCheck(
       cwd,
       timeout: CHECK_TIMEOUT_MS,
       maxBuffer: 16 * 1024 * 1024,
-      env: { ...env, HMA_EVAL_SOURCE: source },
+      env: { ...env, HMA_EVAL_SOURCE: source, HMA_EVAL_ANSWER: answer },
     });
     return null;
   } catch (error) {
@@ -245,6 +250,7 @@ async function runOnce(c: EvalCase, source: string): Promise<Run> {
     failures: [],
     tools: new Map(),
     calls: [],
+    answer: "",
     modelCalls: 0,
     promptTokens: 0,
     completionTokens: 0,
@@ -277,7 +283,15 @@ async function runOnce(c: EvalCase, source: string): Promise<Run> {
       `eval-${c.name}-${randomUUID()}`,
       c.prompt,
     )) {
-      if (event.type === EventType.RUN_ERROR) {
+      // 本文の無いツール呼び出しで止まった回に、途中経過の発言を答えとして残さない
+      if (
+        event.type === EventType.TEXT_MESSAGE_START ||
+        event.type === EventType.TOOL_CALL_START
+      ) {
+        run.answer = "";
+      } else if (event.type === EventType.TEXT_MESSAGE_CONTENT) {
+        run.answer += event.delta;
+      } else if (event.type === EventType.RUN_ERROR) {
         run.outcome = "エラー";
         run.failures.push(event.message);
       } else if (
@@ -326,9 +340,19 @@ async function runOnce(c: EvalCase, source: string): Promise<Run> {
   if (max !== undefined && run.promptTokens > max) {
     run.failures.push(`入力トークン ${run.promptTokens} > ${max}`);
   }
+  for (const tool of c.expect?.forbidTools ?? []) {
+    if (run.tools.has(tool)) run.failures.push(`${tool} を実行した`);
+  }
   if (c.check && run.outcome !== "エラー") {
-    const failed = await runCheck(c.check, copy, source);
-    if (failed) run.failures.push(failed);
+    // 答えは workspace の外に置く。中に置くと diff -r の check が差分と見る
+    const answer = `${copy}.answer.txt`;
+    try {
+      await writeFile(answer, run.answer, "utf-8");
+      const failed = await runCheck(c.check, copy, source, answer);
+      if (failed) run.failures.push(failed);
+    } finally {
+      await rm(answer, { force: true });
+    }
   }
 
   if (run.failures.length > 0) run.kept = copy;
@@ -478,6 +502,7 @@ if (opts.out) {
           promptTokens: r.promptTokens,
           tools: Object.fromEntries(r.tools),
           touched: r.touched ? r.touched.length > 0 : undefined,
+          answer: r.answer,
           calls: r.calls,
         })),
     })),
