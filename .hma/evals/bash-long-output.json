@@ -1,0 +1,8 @@
+{
+  "prompt": "node --test を実行すると落ちるテストがあります。原因を調べて直してください。",
+  "profile": "coding",
+  "workspace": ".hma/evals/fixtures/many-tests",
+  "split": "train",
+  "check": "node --test >/dev/null 2>&1 && diff -rq \"$HMA_EVAL_SOURCE/test\" test >/dev/null",
+  "expect": { "tools": ["bash", "edit_file"] }
+}
