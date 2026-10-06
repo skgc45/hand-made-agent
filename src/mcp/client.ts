@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { safeEnv } from "../agent/env.js";
 
 /** MCP の stdio は「1行1 JSON-RPC」。フレーミングはそれだけ */
 const PROTOCOL = "2025-06-18";
@@ -37,7 +38,7 @@ export class McpClient {
   ) {
     this.child = spawn(config.command, config.args ?? [], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...config.env },
+      env: { ...safeEnv(), ...config.env },
     });
 
     const stdout = this.child.stdout;

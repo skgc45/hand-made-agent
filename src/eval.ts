@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseArgs, promisify } from "node:util";
 import { EventType } from "@ag-ui/core";
+import { safeEnv } from "./agent/env.js";
 import type { withSubagents } from "./agent/subagent.js";
 import { type Call, touchedCalls } from "./eval/behavior.js";
 import {
@@ -213,16 +214,12 @@ async function runCheck(
   source: string,
   answer: string,
 ): Promise<string | null> {
-  // check は .hma に書かれた任意のコマンド。API キーまでは見せない
-  const env = { ...process.env };
-  delete env.GEMINI_API_KEY;
-  delete env.LLM_API_KEY;
   try {
     await promisify(execFile)("sh", ["-c", command], {
       cwd,
       timeout: CHECK_TIMEOUT_MS,
       maxBuffer: 16 * 1024 * 1024,
-      env: { ...env, HMA_EVAL_SOURCE: source, HMA_EVAL_ANSWER: answer },
+      env: { ...safeEnv(), HMA_EVAL_SOURCE: source, HMA_EVAL_ANSWER: answer },
     });
     return null;
   } catch (error) {
