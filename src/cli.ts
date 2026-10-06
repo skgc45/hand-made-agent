@@ -219,13 +219,13 @@ if (opts.config) {
   mcp.close();
 
   console.log(
-    "\nスキル（名前と説明だけが system に載る。本文は skill ツールで読む）:",
+    "\nスキル（名前と説明だけが system に載る。本文は skill ツールか /skill:名前 で読む）:",
   );
   if (skills.length === 0) console.log("  （なし）");
   const skillWidth = Math.max(1, ...skills.map((s) => cells(s.name)));
   for (const skill of skills) {
     console.log(
-      `  ${pad(skill.name, skillWidth)}  ${skill.description}  \x1b[2m${skill.source}\x1b[0m`,
+      `  ${pad(skill.name, skillWidth)}  ${skill.description}  \x1b[2m${skill.source}${skill.disableModelInvocation ? "  disable-model-invocation" : ""}\x1b[0m`,
     );
   }
 

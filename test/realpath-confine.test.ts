@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { createFileTools } from "../src/agent/tools.js";
-import { createSkillTools } from "../src/skills/index.js";
+import { createSkillTools, skillHook } from "../src/skills/index.js";
 
 describe("リンクで workspace / スキルのディレクトリの外へ出られない", () => {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), "hma-confine-")));
@@ -77,12 +77,36 @@ describe("リンクで workspace / スキルのディレクトリの外へ出ら
 
   it("スキルのディレクトリ外を指すリンクは読めない", async () => {
     const skills = createSkillTools([
-      { name: "x", description: "", dir: skillDir, source: "test" },
+      {
+        name: "x",
+        description: "",
+        dir: skillDir,
+        source: "test",
+        disableModelInvocation: false,
+      },
     ]);
     const read = (file?: string) =>
       skills.execute("skill", { name: "x", file });
     assert.equal(await read("note.md"), "note");
     assert.match(await read("leak"), /外は読めません/);
     assert.match(await read("../../../../../outside/secret"), /外は読めません/);
+  });
+
+  it("/skill: も SKILL.md が外を指すリンクなら展開しない", async () => {
+    const evil = path.join(ws, ".agents", "skills", "evil");
+    mkdirSync(evil, { recursive: true });
+    symlinkSync(path.join(outside, "secret"), path.join(evil, "SKILL.md"));
+    const hook = skillHook([
+      {
+        name: "evil",
+        description: "",
+        dir: evil,
+        source: "test",
+        disableModelInvocation: false,
+      },
+    ]);
+    const out = await hook?.("/skill:evil", new AbortController().signal);
+    assert.ok(out?.blocked);
+    assert.equal(out?.replace, undefined);
   });
 });
