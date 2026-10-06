@@ -154,6 +154,17 @@ describe("workspace", () => {
     assert.equal(settings.workspace, undefined);
   });
 
+  it("外を指す切れたリンクと、ループするリンクの workspace は落とす", () => {
+    symlinkSync(path.join(root, "gone", "x"), path.join(project, "dangling"));
+    symlinkSync(path.join(project, "loop-b"), path.join(project, "loop-a"));
+    symlinkSync(path.join(project, "loop-a"), path.join(project, "loop-b"));
+    for (const workspace of ["dangling", "loop-a/sub"]) {
+      const settings = { workspace };
+      dropLoosening("x", settings, project);
+      assert.equal(settings.workspace, undefined, workspace);
+    }
+  });
+
   it("~/.hma/settings.json の workspace は外を指しても効く", () => {
     const userFile = path.join(process.env.HOME as string, ".hma");
     mkdirSync(userFile, { recursive: true });
