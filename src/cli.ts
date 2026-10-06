@@ -28,6 +28,7 @@ import { describeTrust, recordTrust } from "./settings/trust.js";
 import { stopOnSignal } from "./shutdown.js";
 import { createStore } from "./store/index.js";
 import { createTelemetry } from "./telemetry/index.js";
+import { conflictOfContinue, latestThreadId } from "./thread-select.js";
 import {
   PrintTransport,
   StdioTransport,
@@ -38,6 +39,7 @@ const { values: opts } = parseArgs({
   options: {
     thread: { type: "string" },
     new: { type: "boolean" },
+    continue: { type: "boolean", short: "c" },
     list: { type: "boolean" },
     profile: { type: "string" },
     workspace: { type: "string" },
@@ -253,6 +255,12 @@ if (opts.config) {
   process.exit(0);
 }
 
+const conflict = conflictOfContinue(opts);
+if (conflict) {
+  console.error(conflict);
+  process.exit(2);
+}
+
 const store = createStore(STORE, STORE_PATH);
 
 if (opts.list) {
@@ -275,9 +283,20 @@ if (printing && !prompt.trim()) {
   process.exit(2);
 }
 
-const threadId = opts.new
-  ? randomUUID()
-  : (opts.thread ?? (printing ? randomUUID() : "cli"));
+let threadId: string;
+if (opts.continue) {
+  const latest = await latestThreadId(store);
+  threadId = latest ?? randomUUID();
+  console.error(
+    latest
+      ? `直近のスレッド ${latest} を開きます`
+      : "再開できるスレッドがないので、新しいスレッドで始めます",
+  );
+} else {
+  threadId = opts.new
+    ? randomUUID()
+    : (opts.thread ?? (printing ? randomUUID() : "cli"));
+}
 
 // 非対話では信頼を聞けない。緩める方向の設定は落としたまま進む
 const trusted = NEEDS_TRUST ? (printing ? false : await askTrust()) : true;
