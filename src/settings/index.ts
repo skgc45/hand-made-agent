@@ -296,7 +296,37 @@ const LOOSE_APPROVAL = ["auto", "acceptEdits"];
  */
 const warned = new Set<string>();
 
-export function dropLoosening(file: string, settings: Settings): void {
+/** まだ無いパスは、実在する一番近い親を実体に直してから残りを足す */
+function realOrResolved(p: string): string {
+  const full = path.resolve(p);
+  try {
+    return fs.realpathSync(full);
+  } catch {
+    const parent = path.dirname(full);
+    return parent === full
+      ? full
+      : path.join(realOrResolved(parent), path.basename(full));
+  }
+}
+
+/** プロジェクトのディレクトリ（そのもの含む）の中を指すか。シンボリックリンクで抜けるものも外とみなす */
+export function isInside(dir: string, target: string): boolean {
+  const relative = path.relative(realOrResolved(dir), realOrResolved(target));
+  return (
+    relative === "" ||
+    !(
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    )
+  );
+}
+
+export function dropLoosening(
+  file: string,
+  settings: Settings,
+  projectDir: string = path.resolve("."),
+): void {
   // [s]ave のたびに読み直すので、同じ警告は1回だけ出す
   const once = (message: string) => {
     if (warned.has(file + message)) return;
@@ -313,6 +343,15 @@ export function dropLoosening(file: string, settings: Settings): void {
       `approval: ${settings.approval} は ~/.hma/settings.json か環境変数でだけ効きます（無視）`,
     );
     delete settings.approval;
+  }
+  if (
+    settings.workspace !== undefined &&
+    !isInside(projectDir, settings.workspace)
+  ) {
+    once(
+      `workspace: ${settings.workspace} はプロジェクトの外を指すので ~/.hma/settings.json か環境変数でだけ効きます（無視）`,
+    );
+    delete settings.workspace;
   }
 }
 

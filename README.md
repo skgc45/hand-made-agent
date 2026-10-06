@@ -270,6 +270,7 @@ mcp__github__*            ← 末尾 * はツール名の前方一致。サー�
 API キーや会話の送り先になるので、`approval` の `auto` / `acceptEdits` は承認を外すので、
 `.hma/settings.json` と `.hma/settings.local.json` に書いても警告を出して無視する。
 `approval` の `ask` / `plan`（締める方向）はプロジェクトに書いても効く。
+`workspace` はプロジェクトのディレクトリの中を指すときだけ効く（外を指すと無視）。
 
 ### 設定がどこから来たか見る
 
