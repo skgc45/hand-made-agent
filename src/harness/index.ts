@@ -11,6 +11,7 @@ import { createPermissions } from "../permission/index.js";
 import type { Profile } from "../profile/index.js";
 import { mergePermissions, saveAllowRule } from "../settings/index.js";
 import { saveTrusted } from "../settings/trust.js";
+import { type Skill, skillHook } from "../skills/index.js";
 import { type AskFn, approvalHook } from "./approval.js";
 import {
   onStop,
@@ -34,6 +35,8 @@ export type HarnessOptions = {
   hooks: HookSet;
   /** スラッシュコマンド。入力を本文に差し替える */
   commands?: Command[];
+  /** /skill:名前 で本文に差し替えるスキル */
+  skills?: Skill[];
 };
 
 export type Hooks = {
@@ -88,6 +91,7 @@ export function createHooks({
   rules,
   hooks,
   commands = [],
+  skills = [],
 }: HarnessOptions): Hooks {
   const permissions = createPermissions(
     mergePermissions(
@@ -123,6 +127,7 @@ export function createHooks({
     // コマンドを先に展開する。外部フックは展開後の本文を見て止められる
     beforeUserMessage: composeUser([
       commandHook(commands),
+      skillHook(skills),
       userPromptSubmit(hooks.UserPromptSubmit ?? []),
     ]),
     onStop: onStop(hooks.Stop ?? []),

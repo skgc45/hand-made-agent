@@ -96,6 +96,7 @@ export async function buildSessions(
       rules: permissionsFor(assets.trusted),
       hooks: hooksFor(assets.trusted),
       commands: assets.commands,
+      skills: assets.skills,
     }),
   );
   const sessions = new Sessions({
