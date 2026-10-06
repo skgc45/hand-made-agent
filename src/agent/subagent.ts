@@ -8,6 +8,7 @@ import {
   type AgentEvent,
   type BeforeToolCall,
 } from "./loop.js";
+import { appendToBase } from "./prompt.js";
 import type { Toolset } from "./toolset.js";
 
 const NO_APPROVAL =
@@ -366,11 +367,14 @@ export function withSubagents(
 
   const next: Profile = {
     ...profile,
-    system: `${profile.system}\n\n${CHOOSING}`,
+    system: appendToBase(profile.system, CHOOSING),
     kinds: { ...profile.kinds, ...sub.kinds },
     toolset: {
       tools: [...profile.toolset.tools, ...sub.tools],
-      drain: sub.drain,
+      drain: () => [
+        ...(profile.toolset.drain?.() ?? []),
+        ...(sub.drain?.() ?? []),
+      ],
       execute: (name, input, signal) =>
         sub.kinds[name] !== undefined
           ? sub.execute(name, input, signal)
