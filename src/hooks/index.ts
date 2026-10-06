@@ -31,20 +31,29 @@ export type HookOutcome = {
 
 const DEFAULT_TIMEOUT = 30;
 
+/**
+ * パスは書き方かリンク先のどちらかが当たれば発火する（止めるフックをすり抜けさせない）。
+ * "link" はリンク先でだけ当たった印。allow は広げる側なので、呼び出し側が採らない
+ */
 export function matchesTool(
   matcher: string | undefined,
   name: string,
   args: unknown,
-): boolean {
-  if (matcher === undefined) return true;
+  workspace?: string,
+): "direct" | "link" | undefined {
+  if (matcher === undefined) return "direct";
 
   let rule: Rule;
   try {
     rule = parseRule(matcher);
   } catch {
-    return false;
+    return undefined;
   }
-  return subjectsOf(args).some((subject) => hits(rule, name, subject));
+  const subjects = subjectsOf(args, workspace);
+  if (subjects.some((s) => hits(rule, name, s && { ...s, real: undefined }))) {
+    return "direct";
+  }
+  return subjects.some((s) => hits(rule, name, s)) ? "link" : undefined;
 }
 
 /**

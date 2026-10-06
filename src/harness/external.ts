@@ -9,14 +9,18 @@ import { parseArgs } from "./args.js";
 /** フックの言い分はツール結果に混ぜて返すので、モデルから見て区別が付くようにする */
 const NOTE = "[フック]";
 
-export function preToolUse(hooks: HookConfig[]): BeforeToolCall | undefined {
+export function preToolUse(
+  hooks: HookConfig[],
+  workspace?: string,
+): BeforeToolCall | undefined {
   if (hooks.length === 0) return undefined;
 
   return async ({ name, arguments: args, toolCallId }, signal) => {
     const input = parseArgs(args);
 
     for (const hook of hooks) {
-      if (!matchesTool(hook.matcher, name, input)) continue;
+      const matched = matchesTool(hook.matcher, name, input, workspace);
+      if (!matched) continue;
 
       const outcome = await runHook(
         hook,
@@ -36,13 +40,18 @@ export function preToolUse(hooks: HookConfig[]): BeforeToolCall | undefined {
           reason: outcome.reason ?? `${NOTE} 実行が止められました`,
         };
       }
-      if (outcome.decision === "allow") return { kind: "allow" };
+      if (outcome.decision === "allow" && matched === "direct") {
+        return { kind: "allow" };
+      }
     }
     return undefined;
   };
 }
 
-export function postToolUse(hooks: HookConfig[]): AfterToolCall | undefined {
+export function postToolUse(
+  hooks: HookConfig[],
+  workspace?: string,
+): AfterToolCall | undefined {
   if (hooks.length === 0) return undefined;
 
   return async ({ name, arguments: args, result, blocked }, signal) => {
@@ -53,7 +62,7 @@ export function postToolUse(hooks: HookConfig[]): AfterToolCall | undefined {
     let content = result;
 
     for (const hook of hooks) {
-      if (!matchesTool(hook.matcher, name, input)) continue;
+      if (!matchesTool(hook.matcher, name, input, workspace)) continue;
 
       const outcome = await runHook(
         hook,
