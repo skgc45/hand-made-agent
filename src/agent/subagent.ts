@@ -371,7 +371,10 @@ export function withSubagents(
     kinds: { ...profile.kinds, ...sub.kinds },
     toolset: {
       tools: [...profile.toolset.tools, ...sub.tools],
-      drain: sub.drain,
+      drain: () => [
+        ...(profile.toolset.drain?.() ?? []),
+        ...(sub.drain?.() ?? []),
+      ],
       execute: (name, input, signal) =>
         sub.kinds[name] !== undefined
           ? sub.execute(name, input, signal)
