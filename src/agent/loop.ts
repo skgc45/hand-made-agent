@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
-  type CustomEvent,
   EventType,
   type Interrupt,
   type ResumeEntry,
@@ -20,6 +19,7 @@ import {
 } from "@ag-ui/core";
 import OpenAI from "openai";
 import { summarize, transcriptChunks } from "./compact.js";
+import { type AgentCustomEvent, custom } from "./events.js";
 import { extractFacts, type Fact, FactGraph } from "./graph.js";
 import { type PromptSection, SystemPrompt } from "./prompt.js";
 import { MessageAccumulator } from "./stream.js";
@@ -39,7 +39,7 @@ export type AgentEvent =
   | ToolCallArgsEvent
   | ToolCallEndEvent
   | ToolCallResultEvent
-  | CustomEvent;
+  | AgentCustomEvent;
 
 export type ToolCallContext = {
   toolCallId: string;
@@ -193,17 +193,13 @@ function retryEvent(
   error: unknown,
   attempt: number,
   wait: number,
-): CustomEvent {
-  return {
-    type: EventType.CUSTOM,
-    name: "retry",
-    value: {
-      attempt: attempt + 1,
-      waitSeconds: wait,
-      status: error instanceof OpenAI.APIError ? error.status : undefined,
-      message: messageOf(error).slice(0, 120),
-    },
-  };
+): AgentCustomEvent {
+  return custom("retry", {
+    attempt: attempt + 1,
+    waitSeconds: wait,
+    status: error instanceof OpenAI.APIError ? error.status : undefined,
+    message: messageOf(error).slice(0, 120),
+  });
 }
 
 function isRetryable(error: unknown): boolean {
@@ -268,16 +264,12 @@ function gateDecision(decision: BeforeToolCallResult): "ask" | "block" | "run" {
 function gateEvent(
   decision: "ask" | "block" | "run",
   call: OpenAI.ChatCompletionMessageFunctionToolCall,
-): CustomEvent {
-  return {
-    type: EventType.CUSTOM,
-    name: "gate",
-    value: {
-      decision,
-      tool: call.function.name,
-      arguments: call.function.arguments,
-    },
-  };
+): AgentCustomEvent {
+  return custom("gate", {
+    decision,
+    tool: call.function.name,
+    arguments: call.function.arguments,
+  });
 }
 
 type ToolBatchOutcome = { suspended: boolean; terminate: boolean };
@@ -518,11 +510,7 @@ export class Agent {
     };
 
     if (this.recovered.length > 0) {
-      yield {
-        type: EventType.CUSTOM,
-        name: "recovered",
-        value: { calls: this.recovered },
-      };
+      yield custom("recovered", { calls: this.recovered });
       this.recovered = [];
     }
 
@@ -553,11 +541,10 @@ export class Agent {
           signal,
         );
         if (decision?.blocked) {
-          yield {
-            type: EventType.CUSTOM,
-            name: "hook",
-            value: { event: "UserPromptSubmit", reason: decision.blocked },
-          };
+          yield custom("hook", {
+            event: "UserPromptSubmit",
+            reason: decision.blocked,
+          });
           yield {
             type: EventType.RUN_FINISHED,
             threadId: this.threadId,
@@ -567,14 +554,10 @@ export class Agent {
         }
         // 差し替えたぶんが履歴に残る（スラッシュコマンドはここで本文になる）
         if (decision?.replace !== undefined) {
-          yield {
-            type: EventType.CUSTOM,
-            name: "prompt",
-            value: {
-              from: userInput.trim().slice(0, 40),
-              chars: decision.replace.length,
-            },
-          };
+          yield custom("prompt", {
+            from: userInput.trim().slice(0, 40),
+            chars: decision.replace.length,
+          });
         }
         await this.pushMessage({
           role: "user",
@@ -597,11 +580,7 @@ export class Agent {
             await this.pushMessage({ role: "user", content: text });
           }
           if (injected.length > 0) {
-            yield {
-              type: EventType.CUSTOM,
-              name: "steering",
-              value: { messages: injected },
-            };
+            yield custom("steering", { messages: injected });
           }
           injected = [];
 
@@ -813,11 +792,7 @@ export class Agent {
       }
 
       if (attempted) {
-        yield {
-          type: EventType.CUSTOM,
-          name: "reexec",
-          value: { tool: name, arguments: args },
-        };
+        yield custom("reexec", { tool: name, arguments: args });
       }
       // 実行する前に印を残す。結果が積まれないまま落ちたら、
       // 次の起動で「走ったかもしれない」と言える
@@ -942,18 +917,15 @@ export class Agent {
     };
   }
 
-  private usageEvent(usage: OpenAI.CompletionUsage): CustomEvent {
-    return {
-      type: EventType.CUSTOM,
-      name: "usage",
-      value: {
-        messages: this.messages.length,
-        promptTokens: usage.prompt_tokens,
-        completionTokens: usage.completion_tokens,
-        charsPerToken: Number(this.charsPerToken.toFixed(2)),
-        totalPromptTokens: this.totalPromptTokens,
-      },
-    };
+  private usageEvent(usage: OpenAI.CompletionUsage): AgentCustomEvent {
+    return custom("usage", {
+      messages: this.messages.length,
+      // 互換 API は数値を欠かすことがある。受け側が 0 として数えていた挙動を保つ
+      promptTokens: usage.prompt_tokens ?? 0,
+      completionTokens: usage.completion_tokens ?? 0,
+      charsPerToken: Number(this.charsPerToken.toFixed(2)),
+      totalPromptTokens: this.totalPromptTokens,
+    });
   }
 
   private limitChars(): number {
@@ -1004,20 +976,16 @@ export class Agent {
     await this.record({ kind: "fact", facts: extracted.facts });
     await this.recordHistory();
 
-    yield {
-      type: EventType.CUSTOM,
-      name: "graph",
-      value: {
-        dropped: dropped.length,
-        added,
-        superseded,
-        total: this.graph.size(),
-        active: this.graph.active().length,
-        unparsed: extracted.unparsed,
-        promptTokens: extracted.promptTokens,
-        completionTokens: extracted.completionTokens,
-      },
-    };
+    yield custom("graph", {
+      dropped: dropped.length,
+      added,
+      superseded,
+      total: this.graph.size(),
+      active: this.graph.active().length,
+      unparsed: extracted.unparsed,
+      promptTokens: extracted.promptTokens,
+      completionTokens: extracted.completionTokens,
+    });
   }
 
   private async *trimCompact(signal?: AbortSignal): AsyncGenerator<AgentEvent> {
@@ -1042,16 +1010,12 @@ export class Agent {
     this.replaceHistory(kept, SUMMARY, this.summaryText);
     await this.recordHistory();
 
-    yield {
-      type: EventType.CUSTOM,
-      name: "compact",
-      value: {
-        dropped: dropped.length,
-        promptTokens: summary.promptTokens,
-        completionTokens: summary.completionTokens,
-        summary: this.summaryText,
-      },
-    };
+    yield custom("compact", {
+      dropped: dropped.length,
+      promptTokens: summary.promptTokens,
+      completionTokens: summary.completionTokens,
+      summary: this.summaryText,
+    });
   }
 
   private async *trimPlain(): AsyncGenerator<AgentEvent> {
@@ -1064,11 +1028,11 @@ export class Agent {
     this.replace(trimmed);
     await this.recordHistory();
 
-    yield {
-      type: EventType.CUSTOM,
-      name: "trim",
-      value: { strategy: this.trim, removed, kept: this.messages.length },
-    };
+    yield custom("trim", {
+      strategy: this.trim,
+      removed,
+      kept: this.messages.length,
+    });
   }
 
   private replaceHistory(

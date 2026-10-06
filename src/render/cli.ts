@@ -1,4 +1,5 @@
 import { contentToText, EventType } from "@ag-ui/core";
+import type { AgentCustomEvent } from "../agent/events.js";
 import type { AgentEvent } from "../agent/loop.js";
 
 export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -51,7 +52,7 @@ export class CliRenderer {
         };
 
       case EventType.CUSTOM:
-        return this.custom(event.name, event.value as Record<string, unknown>);
+        return this.custom(event);
 
       case EventType.RUN_ERROR:
         return { text: `\n${event.message}\n`, stderr: true };
@@ -61,7 +62,8 @@ export class CliRenderer {
     }
   }
 
-  private custom(name: string, v: Record<string, unknown>): CliOutput | null {
+  private custom(event: AgentCustomEvent): CliOutput | null {
+    const { name, value: v } = event;
     switch (name) {
       case "usage":
         return {
@@ -92,8 +94,7 @@ export class CliRenderer {
           : { text: this.dim(`  [${body}]`) };
       }
       case "recovered": {
-        const calls = v.calls as { tool: string; attempted: boolean }[];
-        const body = calls
+        const body = v.calls
           .map(
             (c) =>
               `${c.tool} は${c.attempted ? "走ったかもしれない" : "未実行"}`,
@@ -128,7 +129,7 @@ export class CliRenderer {
       case "steering":
         return {
           text: this.dim(
-            `  [割り込み: ${(v.messages as string[])
+            `  [割り込み: ${v.messages
               .map((m) => m.replace(/\s+/g, " ").slice(0, 100))
               .join(" / ")}]`,
           ),

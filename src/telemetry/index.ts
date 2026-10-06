@@ -42,7 +42,7 @@ export function toRow(
   context: TelemetryContext,
 ): TelemetryRow {
   const custom = event.type === "CUSTOM" ? event : undefined;
-  const value = (custom?.value ?? {}) as Record<string, unknown>;
+  const value = custom?.value;
   const toolCallName = "toolCallName" in event ? event.toolCallName : undefined;
   const toolCallId = "toolCallId" in event ? event.toolCallId : undefined;
   const content = "content" in event ? event.content : undefined;
@@ -56,12 +56,15 @@ export function toRow(
     type: event.type,
     name: custom?.name ?? "",
     // CUSTOM は toolCallName を持たないので、value.tool を同じ列に寄せる
-    tool: (toolCallName as string) ?? (value.tool as string) ?? "",
+    tool:
+      (toolCallName as string) ?? (value && "tool" in value ? value.tool : ""),
     tool_call_id: (toolCallId as string) ?? "",
     content: typeof content === "string" ? content.slice(0, 200) : "",
-    prompt_tokens: Number(value.promptTokens ?? 0),
-    completion_tokens: Number(value.completionTokens ?? 0),
-    chars_per_token: Number(value.charsPerToken ?? 0),
+    prompt_tokens: value && "promptTokens" in value ? value.promptTokens : 0,
+    completion_tokens:
+      value && "completionTokens" in value ? value.completionTokens : 0,
+    chars_per_token:
+      value && "charsPerToken" in value ? value.charsPerToken : 0,
     payload: custom ? JSON.stringify(value) : "",
   };
 }
