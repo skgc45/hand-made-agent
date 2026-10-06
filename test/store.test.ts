@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { Entry } from "../src/agent/loop.js";
 import { FileStore } from "../src/store/file.js";
+import { SqliteStore } from "../src/store/sqlite.js";
 
 const msg = (content: string) =>
   ({ kind: "message", message: { role: "user", content } }) as unknown as Entry;
@@ -72,4 +75,28 @@ test("FileStore: 壊れたスレッドがあっても list は他を返す", asy
   }
   assert.equal(errors.length, 1);
   assert.ok(String(errors[0]).includes(dir));
+});
+
+test("SqliteStore: 別プロセスが書き込み中でも busy_timeout 内なら待って成功する", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "hma-store-"));
+  const file = path.join(dir, "db.sqlite");
+  const store = new SqliteStore(file);
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      `const { DatabaseSync } = require("node:sqlite");
+       const db = new DatabaseSync(process.argv[1]);
+       db.exec("BEGIN IMMEDIATE");
+       console.log("locked");
+       setTimeout(() => db.exec("COMMIT"), 500);`,
+      file,
+    ],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  );
+  await once(child.stdout, "data");
+  await store.append("t", msg("a"));
+  assert.equal((await store.load("t")).length, 1);
+  await once(child, "exit");
+  await store.close();
 });
