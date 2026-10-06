@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -14,6 +20,7 @@ process.chdir(project);
 const { dropLoosening, loadSettings, saveAllowRule } = await import(
   "../src/settings/index.js"
 );
+const { projectMemory } = await import("../src/context/index.js");
 const {
   describeTrust,
   fingerprint,
@@ -121,5 +128,76 @@ describe("saveTrusted", () => {
     });
     await saveTrusted(() => saveAllowRule("bash(pwd:*)"));
     assert.equal(isTrusted(print()), false);
+  });
+});
+
+describe("workspace", () => {
+  it("プロジェクトの中を指すものは効き、外を指すものは落とす", () => {
+    for (const workspace of [".", "src", path.join(project, "sub")]) {
+      const settings = { workspace };
+      dropLoosening("x", settings, project);
+      assert.equal(settings.workspace, workspace);
+    }
+    for (const workspace of ["/", "..", "../other", os.tmpdir()]) {
+      const settings = { workspace };
+      dropLoosening("x", settings, project);
+      assert.equal(settings.workspace, undefined, workspace);
+    }
+  });
+
+  it("シンボリックリンクでプロジェクトの外を指す workspace は落とす", () => {
+    const outside = mkdtempSync(path.join(root, "outside-"));
+    const link = path.join(project, "escape");
+    symlinkSync(outside, link);
+    const settings = { workspace: "escape" };
+    dropLoosening("x", settings, project);
+    assert.equal(settings.workspace, undefined);
+  });
+
+  it("~/.hma/settings.json の workspace は外を指しても効く", () => {
+    const userFile = path.join(process.env.HOME as string, ".hma");
+    mkdirSync(userFile, { recursive: true });
+    writeFileSync(
+      path.join(userFile, "settings.json"),
+      JSON.stringify({ workspace: "/" }),
+    );
+    write({});
+    try {
+      assert.equal(loadSettings().settings.workspace, "/");
+    } finally {
+      rmSync(path.join(userFile, "settings.json"));
+    }
+  });
+
+  it("プロジェクトの .hma/settings.json の workspace: / は効かない", () => {
+    write({ workspace: "/" });
+    const { settings } = loadSettings();
+    assert.equal(settings.workspace, undefined);
+  });
+});
+
+describe("AGENTS.md の注記", () => {
+  it("未信頼なら注記を付け、信頼済みなら付けない", async () => {
+    writeFileSync(path.join(project, "AGENTS.md"), "決まりごと");
+    const untrusted = await projectMemory(false);
+    const trusted = await projectMemory(true);
+    assert.match(untrusted, /未信頼のリポジトリの文書/);
+    assert.match(untrusted, /決まりごと/);
+    assert.doesNotMatch(trusted, /未信頼/);
+    assert.match(trusted, /決まりごと/);
+  });
+
+  it("~/.hma の AGENTS.md には注記を付けない", async () => {
+    const home = path.join(process.env.HOME as string, ".hma");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(path.join(home, "AGENTS.md"), "本人の決まり");
+    writeFileSync(path.join(project, "AGENTS.md"), "リポジトリの決まり");
+    const text = await projectMemory(false);
+    const [own, repo] = text
+      .split("リポジトリの決まり")[0]
+      .split("本人の決まり");
+    assert.equal(own, "");
+    assert.match(repo, /未信頼のリポジトリの文書/);
+    assert.ok(text.endsWith("リポジトリの決まり"));
   });
 });
