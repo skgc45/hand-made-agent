@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type OpenAI from "openai";
 import { safeEnv } from "./env.js";
+import { insideRoot } from "./realpath.js";
 import type { Toolset } from "./toolset.js";
 
 const exec = promisify(execFile);
@@ -14,7 +15,7 @@ export function createFileTools(workspace: string): Toolset {
 
   function resolveInRoot(relPath: string): string {
     const abs = path.resolve(ROOT, relPath);
-    if (abs !== ROOT && !abs.startsWith(ROOT + path.sep)) {
+    if (!insideRoot(ROOT, abs)) {
       throw new Error(`${workspace} の外にはアクセスできません: ${relPath}`);
     }
     return abs;
@@ -186,11 +187,11 @@ export function createFileTools(workspace: string): Toolset {
   const MAX_HITS = 200;
 
   async function* walk(pattern: string): AsyncGenerator<string> {
-    // glob は ROOT の外に出られない。パターンに .. が入っていても cwd で閉じる
+    // glob は ROOT の外に出られない。.. もリンクも、列挙した各パスを realpath で確かめて外す
     for await (const entry of fs.glob(pattern, { cwd: ROOT })) {
       const rel = typeof entry === "string" ? entry : String(entry);
       const abs = path.resolve(ROOT, rel);
-      if (abs !== ROOT && !abs.startsWith(ROOT + path.sep)) continue;
+      if (!insideRoot(ROOT, abs)) continue;
       yield rel;
     }
   }

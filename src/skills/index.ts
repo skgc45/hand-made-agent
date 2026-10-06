@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type OpenAI from "openai";
 import type { PromptSection } from "../agent/prompt.js";
+import { insideRoot } from "../agent/realpath.js";
 import type { Toolset } from "../agent/toolset.js";
 import type { Profile } from "../profile/index.js";
 
@@ -138,7 +139,7 @@ export function createSkillTools(skills: Skill[]): Toolset {
 
       // スキルのディレクトリの外は読ませない。workspace と同じ閉じ込め方
       const target = path.resolve(skill.dir, file ?? FILE);
-      if (target !== skill.dir && !target.startsWith(skill.dir + path.sep)) {
+      if (!insideRoot(skill.dir, target)) {
         return `エラー: スキルのディレクトリの外は読めません: ${file}`;
       }
 

@@ -33,6 +33,7 @@ export const MODES = ["ask", "auto", "plan", "acceptEdits"];
 export function createPermissions(
   set: PermissionSet,
   mode: string,
+  workspace?: string,
 ): Permissions {
   if (!MODES.includes(mode)) {
     throw new Error(`APPROVAL に不明な値: ${mode}（${MODES.join(" / ")}）`);
@@ -49,7 +50,7 @@ export function createPermissions(
 
   return {
     decide(name, args) {
-      const subjects = subjectsOf(args);
+      const subjects = subjectsOf(args, workspace);
       const any = (rules: Rule[]) =>
         subjects.some((subject) => rules.some((r) => hits(r, name, subject)));
 
@@ -61,7 +62,7 @@ export function createPermissions(
       const allowed = subjects.every(
         (subject) =>
           safe(subject) &&
-          [...allow, ...session].some((r) => hits(r, name, subject)),
+          [...allow, ...session].some((r) => hits(r, name, subject, "all")),
       );
       if (allowed) return "allow";
 
