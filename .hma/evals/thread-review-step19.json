@@ -1,0 +1,7 @@
+{
+  "prompt": "docs/notes.md の末尾に追加された「ステップ19」と SECURITY.md の差分をレビューしてください。ファイルは変更せず、事実関係・数値・セキュリティ上の誤解を招く表現だけ指摘し、問題がなければ問題なしと答えてください。",
+  "profile": "coding",
+  "workspace": ".hma/evals/fixtures/review-no-git",
+  "split": "test",
+  "check": "diff -r \"$HMA_EVAL_SOURCE\" . >/dev/null && grep -qE 'allow ?> ?deny|deny ?> ?allow|差分.{0,20}(取得|取れ|見られ|確認)(でき|ませ)|リポジトリではな|not a git' \"$HMA_EVAL_ANSWER\""
+}

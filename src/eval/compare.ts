@@ -12,6 +12,8 @@ export type RunRecord = {
   /** お題の expect.untouched に親が手を出したか。ステップ23 までの記録には無い */
   touched?: boolean;
   calls?: Call[];
+  /** 最後のアシスタントの発言。ステップ24 までの記録には無い */
+  answer?: string;
 };
 
 export type CaseRecord = {

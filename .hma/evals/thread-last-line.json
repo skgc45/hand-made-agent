@@ -1,0 +1,8 @@
+{
+  "prompt": "big.ts を read_file で1回だけ読んで、ファイルのいちばん最後の行をそのまま返してください。bash は使わないこと。",
+  "profile": "coding",
+  "workspace": ".hma/evals/fixtures/long-file",
+  "split": "train",
+  "check": "diff -r \"$HMA_EVAL_SOURCE\" . >/dev/null && { grep -qF '7c1e-ab42' \"$HMA_EVAL_ANSWER\" || grep -qE '切られ|切れて|読み切れ|最後まで(は)?(読め|確認でき|表示され)(ませ|な)|分かりません|わかりません' \"$HMA_EVAL_ANSWER\"; }",
+  "expect": { "forbidTools": ["bash"] }
+}
