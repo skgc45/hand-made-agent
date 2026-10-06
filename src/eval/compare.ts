@@ -136,8 +136,12 @@ export function compareSplit(
   const sb = score(before, split);
   const sa = score(after, split);
   const rate = (s: SplitScore) => s.passed / s.total;
-  if (rate(sa) > rate(sb)) return "良くなった";
-  if (rate(sa) < rate(sb)) return "悪くなった";
+  // 合格率も揺れる。u では割合の差が検定を通ったときだけ動いたと見る（range はステップ22 のまま）
+  const moved =
+    rule === "range" ||
+    fisherExact(sb.passed, sb.total, sa.passed, sa.total) < SIGNIFICANCE;
+  if (moved && rate(sa) > rate(sb)) return "良くなった";
+  if (moved && rate(sa) < rate(sb)) return "悪くなった";
 
   const changes = casesOf(after, split).flatMap((c) => {
     const prev = casesOf(before, split).find((p) => p.name === c.name);
