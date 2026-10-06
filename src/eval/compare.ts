@@ -1,3 +1,5 @@
+import { mannWhitney } from "./stats.js";
+
 export type Split = "train" | "test";
 
 /** hma eval --out が書き出す1回分 */
@@ -64,15 +66,27 @@ export function score(record: EvalRecord, split: Split): SplitScore {
 }
 
 /**
- * 前後の範囲が重ならないときだけ動いたと見る。同じ条件でも2倍揺れるので。
- * 中央値と相手の最小・最大を比べる形は、まとまった側を基準にすると変更なしでも「悪くなった」を出した
+ * range: 前後の範囲が重ならないときだけ動いたと見る（ステップ22）。回数を増やすほど範囲が広がり、差を言えなくなる。
+ * u: 順位の検定で p < 0.05 のときだけ動いたと見る。3回ずつでは完全に分かれても届かない
  */
-function tokenChange(before: RunRecord[], after: RunRecord[]): Change {
+export type Rule = "range" | "u";
+
+const SIGNIFICANCE = 0.05;
+
+function tokenChange(
+  before: RunRecord[],
+  after: RunRecord[],
+  rule: Rule,
+): Change {
   const b = before.map((r) => r.promptTokens);
   const a = after.map((r) => r.promptTokens);
-  if (Math.max(...a) < Math.min(...b)) return "良くなった";
-  if (Math.min(...a) > Math.max(...b)) return "悪くなった";
-  return "揺れの範囲内";
+  if (rule === "range") {
+    if (Math.max(...a) < Math.min(...b)) return "良くなった";
+    if (Math.min(...a) > Math.max(...b)) return "悪くなった";
+    return "揺れの範囲内";
+  }
+  if (mannWhitney(b, a).p >= SIGNIFICANCE) return "揺れの範囲内";
+  return median(a) < median(b) ? "良くなった" : "悪くなった";
 }
 
 /**
@@ -83,6 +97,7 @@ export function compareSplit(
   before: EvalRecord,
   after: EvalRecord,
   split: Split,
+  rule: Rule = "u",
 ): Change {
   const sb = score(before, split);
   const sa = score(after, split);
@@ -92,7 +107,7 @@ export function compareSplit(
 
   const changes = casesOf(after, split).flatMap((c) => {
     const prev = casesOf(before, split).find((p) => p.name === c.name);
-    return prev ? [tokenChange(prev.runs, c.runs)] : [];
+    return prev ? [tokenChange(prev.runs, c.runs, rule)] : [];
   });
   const up = changes.includes("良くなった");
   const down = changes.includes("悪くなった");
@@ -111,17 +126,21 @@ export function sameCases(before: EvalRecord, after: EvalRecord): boolean {
   return keys(before) === keys(after);
 }
 
-export function verdict(before: EvalRecord, after: EvalRecord): Verdict {
+export function verdict(
+  before: EvalRecord,
+  after: EvalRecord,
+  rule: Rule = "u",
+): Verdict {
   const empty = (["train", "test"] as const).some(
     (split) =>
       score(before, split).total === 0 || score(after, split).total === 0,
   );
   if (empty || !sameCases(before, after)) return "比べられない";
 
-  const train = compareSplit(before, after, "train");
+  const train = compareSplit(before, after, "train", rule);
   if (train === "悪くなった") return "戻す";
   if (train === "揺れの範囲内") return "揺れの範囲内";
-  return compareSplit(before, after, "test") === "良くなった"
+  return compareSplit(before, after, "test", rule) === "良くなった"
     ? "採用"
     : "過学習の疑い";
 }

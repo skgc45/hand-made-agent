@@ -27,6 +27,7 @@ import {
 import {
   compareSplit,
   type EvalRecord,
+  type Rule,
   type Split,
   sameCases,
   score,
@@ -79,6 +80,7 @@ const { positionals, values: opts } = parseArgs({
     repeat: { type: "string", default: "1" },
     out: { type: "string" },
     compare: { type: "boolean" },
+    rule: { type: "string", default: "u" },
   },
 });
 
@@ -100,6 +102,11 @@ if (opts.compare) {
       }
     }),
   );
+  const rule = opts.rule as Rule;
+  if (rule !== "u" && rule !== "range") {
+    console.error(`--rule は u か range: ${opts.rule}`);
+    process.exit(2);
+  }
   if (!sameCases(before, after)) {
     console.error("前後でお題（名前と split）の顔ぶれが違います");
   }
@@ -111,10 +118,10 @@ if (opts.compare) {
     const b = score(before, split);
     const a = score(after, split);
     console.log(
-      `| ${split} | ${b.passed}/${b.total} → ${a.passed}/${a.total} | ${b.tokens} → ${a.tokens} | ${b.total && a.total ? compareSplit(before, after, split) : "-"} |`,
+      `| ${split} | ${b.passed}/${b.total} → ${a.passed}/${a.total} | ${b.tokens} → ${a.tokens} | ${b.total && a.total ? compareSplit(before, after, split, rule) : "-"} |`,
     );
   }
-  console.log(`\n判定: ${verdict(before, after)}`);
+  console.log(`\n判定: ${verdict(before, after, rule)}`);
   process.exit(0);
 }
 
