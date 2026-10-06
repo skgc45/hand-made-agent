@@ -49,6 +49,7 @@ hma --thread <id> --new --profile <name> --workspace <path>
 スラッシュコマンド・system に載る文脈を、それぞれの出所つきで出す。挙動が分からないときはここを見る。
 
 テストは `test/*.test.ts`（権限判定とコマンド展開）。**権限まわりを触ったら必ず追加すること。**
+**足したテストは、変更前の src に差し替えて落ちることを確かめる**（変更前でも通るテストは主張を守っていない）。
 統合的な動作確認は `sandbox/practice`（わざとバグを入れた買い物カゴ。8件中2件落ちる）を
 エージェントに直させて `git diff` で見る。`.gitignore` は `sandbox/*` を除外したまま `!sandbox/practice/` で
 ここだけ追跡しているので、`git checkout` で何度でもやり直せる。
@@ -102,6 +103,20 @@ transport/ store/     stdio / http、sqlite / file / memory
 - **設定の優先順位はフラグ > 環境変数 > 設定ファイル > 既定**、`~/.hma < .hma < .hma/settings.local.json`。
   `src/config.ts` が一箇所に畳む。**API キーだけは設定ファイルから読まない**（共有される場所に書く習慣を作らないため）
 - **`workspace` はセキュリティ境界ではない。** `bash` からも MCP からも外に出られる。止めているのは権限ルールだけ
+- **パスは workspace 基準でそろえ、リンクの先でも判定する**（`agent/realpath.ts`）。絶対パス・`./`・`..`・シンボリックリンクで
+  同じ場所を別の書き方にできるので、書いたままの文字列では比べない。**止める側（deny / ask / フックの発火）は
+  「書き方かリンク先のどちらか」で当て、広げる側は厳しく当てる**（権限ルールの allow は両方が当たったときだけ、
+フックが返す allow は書いたままのパスで当たったときだけ。リンク先でだけ当たったフックの allow は採らない）。
+  ファイル系ツール・grep / glob・skill の読み出しは realpath で範囲を確かめる。macOS の tmpdir は `/var` → `/private/var`
+  のリンクなので、パスを比べるテストは実体どうしで比べる
+- **子プロセス（bash・フック・MCP・eval の check）には `safeEnv()`（`agent/env.ts`）を通す。** API キーを子に見せない。
+  ただし bash から親プロセスの環境は読める（`SECURITY.md`）
+- **メモリより store が正本。** 保存（`append`）やキューの取り出しに失敗したら run を RUN_ERROR で止め、その Agent は
+  `halted` として `Sessions` が手放し、次の run で store から作り直す。`Sessions` は Agent を LRU で持つ（`MAX_LIVE`）ので、
+  **Agent のメモリにしか無い状態を足さない**（手放したら消える）
+- **clone しただけの `.hma`（`settings.json` も `settings.local.json` も）で外へ広げる設定は効かない。** 送り先（`baseUrl` / `telemetryUrl`）、承認を外す
+  `approval`、プロジェクトの外を指す `workspace` は `~/.hma` か環境変数・フラグでだけ効く。未信頼のリポジトリの AGENTS.md は
+  注記つきで system に載る
 - **system プロンプトの文字列連結は `agent/prompt.ts` だけ。** 起動時に集める文脈（環境 / AGENTS.md /
   SessionStart フック / plan モード）は IO を伴うので Agent の外（`context/index.ts`）で集める
 - **フックの合成順は `harness/index.ts` に集約。** 外部フックが権限ルールより先（block も allow もフックが強い）、
