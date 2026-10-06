@@ -1,0 +1,8 @@
+{
+  "prompt": "node check.js が失敗します。原因を調べて直してください。check.js は変えないこと。",
+  "profile": "coding",
+  "workspace": ".hma/evals/fixtures/long-check",
+  "split": "test",
+  "check": "node check.js >/dev/null 2>&1 && diff -q \"$HMA_EVAL_SOURCE/check.js\" check.js >/dev/null",
+  "expect": { "tools": ["bash", "edit_file"] }
+}
