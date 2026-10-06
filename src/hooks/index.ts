@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { safeEnv } from "../agent/env.js";
 import { hits, parseRule, type Rule, subjectsOf } from "../permission/index.js";
 
 export const HOOK_EVENTS = [
@@ -117,6 +118,7 @@ export function runHook(
   return new Promise((resolve) => {
     const child = spawn("/bin/bash", ["-c", hook.command], {
       cwd: process.cwd(),
+      env: safeEnv(),
       signal,
       timeout: (hook.timeout ?? DEFAULT_TIMEOUT) * 1000,
     });
