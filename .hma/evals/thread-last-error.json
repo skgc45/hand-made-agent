@@ -1,0 +1,8 @@
+{
+  "prompt": "app.log を read_file で読んで、いちばん最後に出ている ERROR の行をそのまま返してください。bash と grep は使わないこと。",
+  "profile": "coding",
+  "workspace": ".hma/evals/fixtures/long-log",
+  "split": "test",
+  "check": "diff -r \"$HMA_EVAL_SOURCE\" . >/dev/null && { grep -qF 'q9x4' \"$HMA_EVAL_ANSWER\" || grep -qE '切られ|切れて|読み切れ|最後まで(は)?(読め|確認でき|表示され)(ませ|な)|分かりません|わかりません' \"$HMA_EVAL_ANSWER\"; }",
+  "expect": { "forbidTools": ["bash", "grep"] }
+}
