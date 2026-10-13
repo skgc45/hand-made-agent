@@ -95,9 +95,12 @@ export type AfterToolCall = (
   signal?: AbortSignal,
 ) => Promise<AfterToolCallResult>;
 
-/** 入力を履歴に積む前の穴。止めるか、差し替えるか、文脈を足すか、何もしないか */
+/**
+ * 入力を履歴に積む前の穴。止めるか、差し替えるか、文脈を足すか、何もしないか。
+ * `compact` は手動 /compact 専用。履歴には積まず、その場で要約して run を終える
+ */
 export type BeforeUserMessageResult =
-  | { blocked?: string; replace?: string; context?: string }
+  | { blocked?: string; replace?: string; context?: string; compact?: string }
   | undefined;
 
 export type BeforeUserMessage = (
@@ -555,6 +558,16 @@ export class Agent {
           };
           return;
         }
+        // 手動 /compact。履歴には積まず、要約だけしてターンを消費しない
+        if (decision?.compact !== undefined) {
+          yield* this.manualCompact(decision.compact, signal);
+          yield {
+            type: EventType.RUN_FINISHED,
+            threadId: this.threadId,
+            runId,
+          };
+          return;
+        }
         // 差し替えたぶんが履歴に残る（スラッシュコマンドはここで本文になる）
         if (decision?.replace !== undefined) {
           yield custom("prompt", {
@@ -991,24 +1004,80 @@ export class Agent {
     });
   }
 
-  private async *trimCompact(signal?: AbortSignal): AsyncGenerator<AgentEvent> {
-    const { kept, dropped } = splitSafe(this.messages, this.limitChars());
-    if (dropped.length === 0) return;
-
-    const summary = { promptTokens: 0, completionTokens: 0 };
+  /** 落とすかたまりを chunk ごとに要約して summaryText を更新する。前回の要約に重ねていく */
+  private async *summarizeDropped(
+    dropped: OpenAI.ChatCompletionMessageParam[],
+    instruction: string | undefined,
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<
+    AgentEvent,
+    { promptTokens: number; completionTokens: number }
+  > {
+    const totals = { promptTokens: 0, completionTokens: 0 };
     let text = this.summaryText;
     for (const chunk of transcriptChunks(dropped)) {
       const part = yield* this.withRetry(
         () =>
-          summarize(this.config.client, this.config.model, text, chunk, signal),
+          summarize(
+            this.config.client,
+            this.config.model,
+            text,
+            chunk,
+            instruction,
+            signal,
+          ),
         signal,
       );
       text = part.text;
-      summary.promptTokens += part.promptTokens;
-      summary.completionTokens += part.completionTokens;
+      totals.promptTokens += part.promptTokens;
+      totals.completionTokens += part.completionTokens;
     }
     this.summaryText = text;
-    this.totalPromptTokens += summary.promptTokens;
+    this.totalPromptTokens += totals.promptTokens;
+    return totals;
+  }
+
+  private async *trimCompact(signal?: AbortSignal): AsyncGenerator<AgentEvent> {
+    const { kept, dropped } = splitSafe(this.messages, this.limitChars());
+    if (dropped.length === 0) return;
+
+    const summary = yield* this.summarizeDropped(dropped, undefined, signal);
+
+    this.replaceHistory(kept, SUMMARY, this.summaryText);
+    await this.recordHistory();
+
+    yield custom("compact", {
+      dropped: dropped.length,
+      promptTokens: summary.promptTokens,
+      completionTokens: summary.completionTokens,
+      summary: this.summaryText,
+    });
+  }
+
+  /**
+   * 手動 /compact。しきい値は見ず、残すのは最後の1ターンだけ（splitSafe の安全規則どおり
+   * tool result の直前では切らない）。指示があれば要約のたびに渡す
+   */
+  private async *manualCompact(
+    instruction: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<AgentEvent> {
+    const { kept, dropped } = splitSafe(this.messages, 0);
+    if (dropped.length === 0) {
+      yield custom("compact", {
+        dropped: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        summary: this.summaryText,
+      });
+      return;
+    }
+
+    const summary = yield* this.summarizeDropped(
+      dropped,
+      instruction || undefined,
+      signal,
+    );
 
     this.replaceHistory(kept, SUMMARY, this.summaryText);
     await this.recordHistory();

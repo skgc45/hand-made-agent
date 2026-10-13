@@ -63,6 +63,8 @@ export async function summarize(
   model: string,
   previous: string,
   transcript: string,
+  /** 手動 /compact の引数。あれば要約で何を重視するかに使う */
+  instruction?: string,
   signal?: AbortSignal,
 ): Promise<SummaryResult> {
   const response = await client.chat.completions.create(
@@ -72,7 +74,7 @@ export async function summarize(
         { role: "system", content: INSTRUCTION },
         {
           role: "user",
-          content: `${previous ? `これまでの要約:\n${previous}\n\n` : ""}追加する会話ログ:\n${transcript}`,
+          content: `${previous ? `これまでの要約:\n${previous}\n\n` : ""}${instruction ? `要約で特に重視すること: ${instruction}\n\n` : ""}追加する会話ログ:\n${transcript}`,
         },
       ],
     },

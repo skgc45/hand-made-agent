@@ -4,7 +4,7 @@ import type {
   BeforeToolCall,
   BeforeUserMessage,
 } from "../agent/loop.js";
-import { type Command, commandHook } from "../commands/index.js";
+import { type Command, commandHook, compactHook } from "../commands/index.js";
 import type { HookSet } from "../hooks/index.js";
 import type { PermissionSet } from "../permission/index.js";
 import { createPermissions } from "../permission/index.js";
@@ -126,8 +126,11 @@ export function createHooks({
       truncateResult(),
       postToolUse(hooks.PostToolUse ?? [], profile.workspace),
     ]),
-    // コマンドを先に展開する。外部フックは展開後の本文を見て止められる
+    // 組み込みの /compact を先頭に置き、生の入力を見せる。
+    // `.hma/commands/compact.md` があっても展開前のここで検出するので食われない。
+    // composeUser は compact を検出しても即座には返さず、外部フックの block は最後まで効く
     beforeUserMessage: composeUser([
+      compactHook(),
       commandHook(commands),
       skillHook(skills),
       userPromptSubmit(hooks.UserPromptSubmit ?? []),

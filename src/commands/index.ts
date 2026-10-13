@@ -149,3 +149,17 @@ export function commandHook(
     return replaced === undefined ? undefined : { replace: replaced };
   };
 }
+
+const COMPACT = /^\/compact(?:\s+([\s\S]*))?$/;
+
+/**
+ * 組み込みの手動 /compact。`.hma/commands` の Markdown コマンドとは別物で、
+ * 本文を差し替えるのではなく Agent にその場で要約させる（agent/loop.ts の manualCompact）
+ */
+export function compactHook(): BeforeUserMessage {
+  return async (text) => {
+    const match = COMPACT.exec(text.trim());
+    if (!match) return undefined;
+    return { compact: (match[1] ?? "").trim() };
+  };
+}
