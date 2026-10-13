@@ -627,8 +627,8 @@ packages:
       react-dom:
         optional: true
 
-  '@modelcontextprotocol/sdk@1.30.0':
-    resolution: {integrity: sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==}
+  '@modelcontextprotocol/sdk@1.32.1':
+    resolution: {integrity: sha512-2DdE+SJDtzLEEWzY1ZjY7Q+VcPhcV1KisD3zI4u0XZyktsjHum1mwbMI+JaulUBi2OZk+KJAi2uPXzxichPkdw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@cfworker/json-schema': ^4.1.1
@@ -3250,8 +3250,8 @@ snapshots:
     dependencies:
       '@ag-ui/client': 1.0.1
       '@copilotkit/shared': 1.76.0(@ag-ui/core@1.0.1(zod@3.25.76))
-      '@modelcontextprotocol/ext-apps': 1.7.5(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@3.25.76))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@3.25.76)
-      '@modelcontextprotocol/sdk': 1.30.0(supports-color@7.2.0)(zod@3.25.76)
+      '@modelcontextprotocol/ext-apps': 1.7.5(@modelcontextprotocol/sdk@1.32.1(supports-color@7.2.0)(zod@3.25.76))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.32.1(supports-color@7.2.0)(zod@3.25.76)
       zod: 3.25.76
     transitivePeerDependencies:
       - '@ag-ui/core'
@@ -3536,16 +3536,16 @@ snapshots:
     dependencies:
       '@chevrotain/types': 11.1.2
 
-  '@modelcontextprotocol/ext-apps@1.7.5(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@3.25.76))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@3.25.76)':
+  '@modelcontextprotocol/ext-apps@1.7.5(@modelcontextprotocol/sdk@1.32.1(supports-color@7.2.0)(zod@3.25.76))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@3.25.76)':
     dependencies:
-      '@modelcontextprotocol/sdk': 1.30.0(supports-color@7.2.0)(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.32.1(supports-color@7.2.0)(zod@3.25.76)
       '@standard-schema/spec': 1.1.0
       zod: 3.25.76
     optionalDependencies:
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
 
-  '@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.32.1(supports-color@7.2.0)(zod@3.25.76)':
     dependencies:
       '@hono/node-server': 2.1.1(hono@4.13.7)
       ajv: 8.20.0
