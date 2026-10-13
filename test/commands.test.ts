@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import {
   type Command,
+  compactHook,
   expand,
   loadCommands,
   splitArgs,
@@ -121,6 +122,31 @@ describe("splitArgs", () => {
       "\\d+",
       "C:\\src\\a",
     ]);
+  });
+});
+
+describe("compactHook", () => {
+  const hook = compactHook();
+
+  it("/compact だけなら指示は空文字", async () => {
+    assert.deepEqual(await hook("/compact"), { compact: "" });
+  });
+
+  it("後ろの文を指示として渡す", async () => {
+    assert.deepEqual(await hook("/compact 数値だけ残して"), {
+      compact: "数値だけ残して",
+    });
+  });
+
+  it("前後の空白は落とす", async () => {
+    assert.deepEqual(await hook("  /compact   急いで  "), {
+      compact: "急いで",
+    });
+  });
+
+  it("/compact で始まらない入力には反応しない", async () => {
+    assert.equal(await hook("/compaction"), undefined);
+    assert.equal(await hook("これは/compactを含むただの文章"), undefined);
   });
 });
 
