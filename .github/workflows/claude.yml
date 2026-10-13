@@ -1,0 +1,93 @@
+name: claude
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+      # OAuth認証でも要る。無いと "Could not fetch an OIDC token" で落ちる
+      id-token: write
+    env:
+      # prepare が向ける .githooks は gitleaks を要求するが、ランナーには無い。漏洩は security/secrets が PR で見る
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.hooksPath
+      GIT_CONFIG_VALUE_0: /dev/null
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      # cache は張らない。ここで保存した store は main のスコープに入り、ci / security が復元する
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+
+      - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
+        id: claude
+        with:
+          settings: |
+            {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "bash \"$GITHUB_WORKSPACE/.github/scripts/claude-stop-gate.sh\""}]}]}}
+          additional_permissions: |
+            actions: read
+          # @claude → Sonnet / @claude-opus → Opus
+          # git push / fetch / rebase は --receive-pack 等で任意コード実行になるので許可しない。push は同梱の git-push.sh
+          claude_args: |
+            --model ${{ contains(github.event.comment.body || github.event.review.body || github.event.issue.body, '@claude-opus') && 'claude-opus-5' || 'claude-sonnet-5' }}
+            --max-turns 200
+            --append-system-prompt "実装を頼まれたら、pnpm lint && pnpm typecheck && pnpm test を通してアクション同梱の git-push.sh でpushし、gh pr create でPRを出すまでターンを終えない。PRを出せずに止まるときは、理由と残りの手順をトラッキングコメントに書いてから終える。"
+            --allowedTools "Edit,Write,NotebookEdit,TodoWrite,Task,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git rm:*),Bash(git mv:*),Bash(git restore:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(git merge:*),Bash(git stash:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(pnpm:*),Bash(node:*),Bash(npx:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(rg:*),Bash(find:*),Bash(jq:*),Bash(diff:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*)"
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+      # 止まった原因を後から追えるよう、やりとりの全体を残す
+      - name: 実行の記録を残す
+        if: always() && steps.claude.outputs.execution_file
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: claude-execution
+          path: ${{ steps.claude.outputs.execution_file }}
+          retention-days: 14
+
+      - name: PRが出ていなければissueに知らせる
+        if: always() && github.event.issue && !github.event.issue.pull_request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          SINCE: ${{ github.event.comment.created_at || github.event.issue.created_at }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          found=$(gh pr list --repo "$GITHUB_REPOSITORY" --state all --limit 50 \
+            --json headRefName,createdAt \
+            | jq --arg p "claude/issue-$ISSUE-" --arg t "$SINCE" \
+              '[.[] | select((.headRefName | startswith($p)) and .createdAt >= $t)] | length')
+          if [ "$found" = "0" ]; then
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" \
+              --body "この実行ではPRが作られませんでした（[実行]($RUN_URL)）。実装を頼んでいた場合は、途中で止まっています。"
+          fi
